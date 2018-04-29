@@ -33,7 +33,7 @@
 #import "SPEditorPreferencePane.h"
 #import "SPGeneralPreferencePane.h"
 
-@interface SPPreferenceController (PrivateAPI)
+@interface SPPreferenceController () <NSWindowDelegate>
 
 - (void)_setupToolbar;
 - (void)_resizeWindowForContentView:(NSView *)view;
@@ -68,8 +68,6 @@
 {		
 	[self _setupToolbar];
 
-	[(SPGeneralPreferencePane *)generalPreferencePane updateDefaultFavoritePopup];
-	
 	preferencePanes = [[NSArray alloc] initWithObjects:
 					   generalPreferencePane,
 					   tablesPreferencePane,
@@ -105,40 +103,9 @@
 	
 	[toolbar setSelectedItemIdentifier:[preferencePane preferencePaneIdentifier]];
 	
+	[preferencePane preferencePaneWillBeShown];
+	
 	[self _resizeWindowForContentView:[preferencePane preferencePaneView]];
-}
-
-/**
- * Displays the table preferences pane.
- */
-- (IBAction)displayTablePreferences:(id)sender
-{
-	[[self window] setMinSize:NSMakeSize(0, 0)];
-	[[self window] setShowsResizeIndicator:[tablesPreferencePane preferencePaneAllowsResizing]];
-	
-	[toolbar setSelectedItemIdentifier:[tablesPreferencePane preferencePaneIdentifier]];
-	
-	[(SPTablesPreferencePane *)tablesPreferencePane updateDisplayedTableFontName];
-	
-	[self _resizeWindowForContentView:[tablesPreferencePane preferencePaneView]];
-}
-
-/**
- * Displays the editor preferences pane.
- */
-- (IBAction)displayEditorPreferences:(id)sender
-{
-	[(SPEditorPreferencePane *)editorPreferencePane updateColorSchemeSelectionMenu];
-	[(SPEditorPreferencePane *)editorPreferencePane updateDisplayColorThemeName];
-	
-	[[self window] setMinSize:NSMakeSize(0, 0)];
-	[[self window] setShowsResizeIndicator:[editorPreferencePane preferencePaneAllowsResizing]];
-	
-	[toolbar setSelectedItemIdentifier:[editorPreferencePane preferencePaneIdentifier]];
-	
-	[(SPEditorPreferencePane *)editorPreferencePane updateDisplayedEditorFontName];
-	
-	[self _resizeWindowForContentView:[editorPreferencePane preferencePaneView]];
 }
 
 #pragma mark -
@@ -161,14 +128,14 @@
 			
 			[prefs setObject:[NSArchiver archivedDataWithRootObject:font] forKey:SPGlobalResultTableFont];
 			
-			[(SPTablesPreferencePane *)tablesPreferencePane updateDisplayedTableFontName];
+			[tablesPreferencePane updateDisplayedTableFontName];
 			break;
 		case SPPrefFontChangeTargetEditor:
 			font = [[NSFontPanel sharedFontPanel] panelConvertFont:[NSUnarchiver unarchiveObjectWithData:[prefs dataForKey:SPCustomQueryEditorFont]]];
 			
 			[prefs setObject:[NSArchiver archivedDataWithRootObject:font] forKey:SPCustomQueryEditorFont];
 			
-			[(SPEditorPreferencePane *)editorPreferencePane updateDisplayedEditorFontName];
+			[editorPreferencePane updateDisplayedEditorFontName];
 			break;
 	}
 }
@@ -198,7 +165,7 @@
 	[tablesItem setLabel:[tablesPreferencePane preferencePaneName]];
 	[tablesItem setImage:[tablesPreferencePane preferencePaneIcon]];
 	[tablesItem setTarget:self];
-	[tablesItem setAction:@selector(displayTablePreferences:)];
+	[tablesItem setAction:@selector(displayPreferencePane:)];
 
 	// Notification preferences
 	notificationsItem = [[NSToolbarItem alloc] initWithItemIdentifier:[notificationsPreferencePane preferencePaneIdentifier]];
@@ -214,7 +181,7 @@
 	[editorItem setLabel:[editorPreferencePane preferencePaneName]];
 	[editorItem setImage:[editorPreferencePane preferencePaneIcon]];
 	[editorItem setTarget:self];
-	[editorItem setAction:@selector(displayEditorPreferences:)];
+	[editorItem setAction:@selector(displayPreferencePane:)];
 	
 	// AutoUpdate preferences
 	autoUpdateItem = [[NSToolbarItem alloc] initWithItemIdentifier:[autoUpdatePreferencePane preferencePaneIdentifier]];
@@ -259,11 +226,114 @@
 	[view setFrameOrigin:NSMakePoint(0, 0)];
 }
 
+#pragma mark - SPPreferenceControllerDelegate
+
+#pragma mark Window delegate methods
+
+/**
+ * Trap window close notifications and use them to ensure changes are saved.
+ */
+- (void)windowWillClose:(NSNotification *)notification
+{
+	[[NSColorPanel sharedColorPanel] close];
+
+	// Mark the currently selected field in the window as having finished editing, to trigger saves.
+	if ([[self window] firstResponder]) {
+		[[self window] endEditingFor:[[self window] firstResponder]];
+	}
+}
+
+/**
+ * Trap window resize notifications and use them to disable resizing on most tabs
+ * - except for the favourites tab.
+ */
+- (NSSize)windowWillResize:(NSWindow *)sender toSize:(NSSize)frameSize
+{
+	[[NSColorPanel sharedColorPanel] close];
+
+	return [sender showsResizeIndicator] ? frameSize : [sender frame].size;
+}
+
+#pragma mark -
+#pragma mark Toolbar delegate methods
+
+- (NSToolbarItem *)toolbar:(NSToolbar *)aToolbar itemForItemIdentifier:(NSString *)itemIdentifier willBeInsertedIntoToolbar:(BOOL)flag
+{
+	if ([itemIdentifier isEqualToString:SPPreferenceToolbarGeneral]) {
+		return generalItem;
+	}
+	else if ([itemIdentifier isEqualToString:SPPreferenceToolbarTables]) {
+		return tablesItem;
+	}
+	else if ([itemIdentifier isEqualToString:SPPreferenceToolbarNotifications]) {
+		return notificationsItem;
+	}
+	else if ([itemIdentifier isEqualToString:SPPreferenceToolbarAutoUpdate]) {
+		return autoUpdateItem;
+	}
+	else if ([itemIdentifier isEqualToString:SPPreferenceToolbarNetwork]) {
+		return networkItem;
+	}
+	else if ([itemIdentifier isEqualToString:SPPreferenceToolbarEditor]) {
+		return editorItem;
+	}
+	else if ([itemIdentifier isEqualToString:SPPreferenceToolbarShortcuts]) {
+		return shortcutItem;
+	}
+
+	return [[[NSToolbarItem alloc] initWithItemIdentifier:itemIdentifier] autorelease];
+}
+
+- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)aToolbar
+{
+	return @[
+			 SPPreferenceToolbarGeneral,
+			 SPPreferenceToolbarTables,
+			 SPPreferenceToolbarNotifications,
+			 SPPreferenceToolbarEditor,
+			 SPPreferenceToolbarShortcuts,
+			 SPPreferenceToolbarAutoUpdate,
+			 SPPreferenceToolbarNetwork
+			 ];
+}
+
+- (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)aToolbar
+{
+	return @[
+			 SPPreferenceToolbarGeneral,
+			 SPPreferenceToolbarTables,
+			 SPPreferenceToolbarNotifications,
+			 SPPreferenceToolbarEditor,
+			 SPPreferenceToolbarShortcuts,
+			 SPPreferenceToolbarAutoUpdate,
+			 SPPreferenceToolbarNetwork
+			 ];
+}
+
+- (NSArray *)toolbarSelectableItemIdentifiers:(NSToolbar *)aToolbar
+{
+	return @[
+			 SPPreferenceToolbarGeneral,
+			 SPPreferenceToolbarTables,
+			 SPPreferenceToolbarNotifications,
+			 SPPreferenceToolbarEditor,
+			 SPPreferenceToolbarShortcuts,
+			 SPPreferenceToolbarAutoUpdate,
+			 SPPreferenceToolbarNetwork
+			 ];
+}
+
 #pragma mark -
 
 - (void)dealloc
 {
-	[preferencePanes release], preferencePanes = nil;
+	SPClear(preferencePanes);
+	SPClear(generalItem);
+	SPClear(tablesItem);
+	SPClear(notificationsItem);
+	SPClear(editorItem);
+	SPClear(autoUpdateItem);
+	SPClear(networkItem);
 	
 	[super dealloc];
 }

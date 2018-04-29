@@ -73,9 +73,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 		[webView setDrawsBackground:YES];
 		[webView setEditable:NO];
 		[webView setShouldCloseWithWindow:YES];
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 1060
 		[webView setShouldUpdateWhileOffscreen:NO];
-#endif
 		suppressExceptionAlerting = NO;
 	}
 	
@@ -126,7 +124,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 
 - (void)dealloc
 {
-	if(webPreferences) [webPreferences release];
+	if(webPreferences) SPClear(webPreferences);
 	[super dealloc];
 }
 
@@ -191,8 +189,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 						encoding:NSUTF8StringEncoding
 						error:&err];
 			if (err != nil) {
-				SPBeginAlertSheet(NSLocalizedString(@"Error", @"error"), NSLocalizedString(@"OK", @"OK button"), nil, nil, [self window], self, nil, nil,
-								  [NSString stringWithFormat:@"%@", [err localizedDescription]]);
+				SPOnewayAlertSheet(NSLocalizedString(@"Error", @"error"), [self window], [NSString stringWithFormat:@"%@", [err localizedDescription]]);
 			}
 		}
 	}
@@ -200,7 +197,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 
 - (IBAction)printDocument:(id)sender
 {
-
+#warning duplicate code with -[SPDatabaseDocument webView:didFinishLoadForFrame:]
 	NSPrintInfo *printInfo = [NSPrintInfo sharedPrintInfo];
 
 	NSSize paperSize = [printInfo paperSize];
@@ -228,8 +225,8 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 
 	NSPrintOperation *op = [NSPrintOperation printOperationWithView:[[[webView mainFrame] frameView] documentView] printInfo:printInfo];
 
-	// Perform the print operation on a background thread
-	[op setCanSpawnSeparateThread:YES];
+	// do not try to use webkit from a background thread!
+	[op setCanSpawnSeparateThread:NO];
 
 	// Add the ability to select the orientation to print panel
 	NSPrintPanel *printPanel = [op printPanel];
@@ -260,7 +257,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 
 	[c displayHTMLContent:[NSString stringWithFormat:@"<pre>%@</pre>", [sourceCode HTMLEscapeString]] withOptions:nil];
 
-	[[NSApp delegate] addHTMLOutputController:c];
+	[SPAppDelegate addHTMLOutputController:c];
 }
 
 - (void)saveDocument
@@ -294,7 +291,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 	windowUUID = @"";
 	docUUID = @"";
 
-	[[NSApp delegate] removeHTMLOutputController:self];
+	[SPAppDelegate removeHTMLOutputController:self];
 
 	[self release];
 }
@@ -332,7 +329,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 	if(request != nil) {
 		SPBundleHTMLOutputController *c = [[SPBundleHTMLOutputController alloc] init];
 		[c displayURLString:[[request URL] absoluteString] withOptions:nil];
-		[[NSApp delegate] addHTMLOutputController:c];
+		[SPAppDelegate addHTMLOutputController:c];
 		return [c webView];
 	}
 	return nil;
@@ -351,12 +348,12 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 
 	// sequelpro:// handler
 	if([[[request URL] scheme] isEqualToString:@"sequelpro"] && navigationType == WebNavigationTypeLinkClicked) {
-		[[NSApp delegate] handleEventWithURL:[request URL]];
+		[SPAppDelegate handleEventWithURL:[request URL]];
 		[listener ignore];
 	}
 	// sp-reveal-file://a_file_path reveals the file in Finder
 	else if([[[request URL] scheme] isEqualToString:@"sp-reveal-file"] && navigationType == WebNavigationTypeLinkClicked) {
-		[[NSWorkspace sharedWorkspace] selectFile:[[[request mainDocumentURL] absoluteString] substringFromIndex:16] inFileViewerRootedAtPath:nil];
+		[[NSWorkspace sharedWorkspace] selectFile:[[[request mainDocumentURL] absoluteString] substringFromIndex:16] inFileViewerRootedAtPath:@""];
 		[listener ignore];
 	}
 	// sp-open-file://a_file_path opens the file with the default
@@ -571,7 +568,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
  */
 - (NSString *)getShellEnvironmentForName:(NSString*)keyName
 {
-	return [[[NSApp delegate] shellEnvironmentForDocument:nil] objectForKey:keyName];
+	return [[SPAppDelegate shellEnvironmentForDocument:nil] objectForKey:keyName];
 }
 
 /**
@@ -691,7 +688,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 		output = [SPBundleCommandRunner runBashCommand:command withEnvironment:nil atCurrentDirectoryPath:nil error:&err];
 	else {
 		NSMutableDictionary *theEnv = [NSMutableDictionary dictionary];
-		[theEnv addEntriesFromDictionary:[[NSApp delegate] shellEnvironmentForDocument:nil]];
+		[theEnv addEntriesFromDictionary:[SPAppDelegate shellEnvironmentForDocument:nil]];
 		[theEnv setObject:uuid forKey:SPBundleShellVariableProcessID];
 		[theEnv setObject:[NSString stringWithFormat:@"%@%@", SPURLSchemeQueryInputPathHeader, uuid] forKey:SPBundleShellVariableQueryFile];
 		[theEnv setObject:[NSString stringWithFormat:@"%@%@", SPURLSchemeQueryResultPathHeader, uuid] forKey:SPBundleShellVariableQueryResultFile];
@@ -701,7 +698,7 @@ static NSString *SPSaveDocumentAction = @"SPSaveDocument";
 		output = [SPBundleCommandRunner runBashCommand:command 
 									   withEnvironment:theEnv 
 								atCurrentDirectoryPath:nil 
-										callerInstance:[NSApp delegate] 
+										callerInstance:SPAppDelegate
 										   contextInfo:[NSDictionary dictionaryWithObjectsAndKeys:
 														@"JavaScript", @"name",
 														NSLocalizedString(@"General", @"general menu item label"), @"scope",

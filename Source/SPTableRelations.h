@@ -34,11 +34,12 @@
 @class SPTablesList;
 @class SPTableData;
 
-@interface SPTableRelations : NSObject 
+@interface SPTableRelations : NSObject <NSTableViewDelegate, NSTableViewDataSource>
 {	
 	IBOutlet SPDatabaseDocument *tableDocumentInstance;
 	IBOutlet SPTablesList       *tablesListInstance;
 	IBOutlet SPTableData        *tableDataInstance;
+	IBOutlet SPTableView        *tableList;
 		
 	IBOutlet NSButton    *addRelationButton;
 	IBOutlet NSButton    *removeRelationButton;	
@@ -57,7 +58,10 @@
 	IBOutlet NSButton            *confirmAddRelationButton;
 	IBOutlet NSProgressIndicator *dataProgressIndicator;
 	IBOutlet NSTextField         *progressStatusTextField;
-		
+	
+	IBOutlet NSView     *detailErrorView;
+	IBOutlet NSTextView *detailErrorText;
+	
 	SPMySQLConnection *connection;
 
 	NSUserDefaults *prefs;
@@ -81,8 +85,8 @@
 - (void)tableSelectionChanged:(NSNotification *)notification;
 
 // Task interaction
-- (void)startDocumentTaskForTab:(NSNotification *)aNotification;
-- (void)endDocumentTaskForTab:(NSNotification *)aNotification;
+- (void)startDocumentTaskForTab:(NSNotification *)notification;
+- (void)endDocumentTaskForTab:(NSNotification *)notification;
 
 // Other
 - (NSArray *)relationDataForPrinting;

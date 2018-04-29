@@ -191,7 +191,7 @@
 		return;
 	}
 
-	[[self exportFileHandle] setShouldWriteWithCompressionFormat:fileCompressionFormat];
+	[[self exportFileHandle] setCompressionFormat:fileCompressionFormat];
 }
 
 #pragma mark -
@@ -226,7 +226,7 @@
 
 - (void)dealloc
 {
-	if (exportFileHandle) [exportFileHandle release], exportFileHandle = nil;
+	if (exportFileHandle) SPClear(exportFileHandle);
 	
 	[super dealloc];
 }

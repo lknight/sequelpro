@@ -47,6 +47,20 @@ static const NSString *SPTriggerDefiner    = @"TriggerDefiner";
 static const NSString *SPTriggerCreated    = @"TriggerCreated";
 static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 
+typedef NS_ENUM(NSInteger, SPTriggerActionTimeTag) {
+	SPTriggerActionTimeBeforeTag = 0,
+	SPTriggerActionTimeAfterTag  = 1
+};
+
+typedef NS_ENUM(NSInteger, SPTriggerEventTag) {
+	SPTriggerEventInsertTag = 0,
+	SPTriggerEventUpdateTag = 1,
+	SPTriggerEventDeleteTag = 2
+};
+
+static SPTriggerActionTimeTag TagForActionTime(NSString *mysql);
+static SPTriggerEventTag TagForEvent(NSString *mysql);
+
 @interface SPTableTriggers ()
 
 - (void)_editTriggerAtIndex:(NSInteger)index;
@@ -54,6 +68,8 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 - (void)_refreshTriggerDataForcingCacheRefresh:(BOOL)clearAllCaches;
 - (void)_openTriggerSheet;
 - (void)_reopenTriggerSheet:(NSWindow *)sheet returnCode:(NSInteger)returnCode contextInfo:(void *)contextInfo;
+- (void)_addPreferenceObservers;
+- (void)_removePreferenceObservers;
 
 @end
 
@@ -100,8 +116,7 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 		[[column dataCell] setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
 	}
 
-	// Register as an observer for the when the UseMonospacedFonts preference changes
-	[prefs addObserver:self forKeyPath:SPUseMonospacedFonts options:NSKeyValueObservingOptionNew context:NULL];
+	[self _addPreferenceObservers];
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
 											 selector:@selector(triggerStatementTextDidChange:)
@@ -199,7 +214,7 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 		if ([connection queryErrored]) {
 			SPBeginAlertSheet(NSLocalizedString(@"Unable to delete trigger", @"error deleting trigger message"),
 							  NSLocalizedString(@"OK", @"OK button"),
-							  nil, nil, [NSApp mainWindow], self, @selector(_reopenTriggerSheet:returnCode:contextInfo:), nil,
+							  nil, nil, [NSApp mainWindow], self, @selector(_reopenTriggerSheet:returnCode:contextInfo:), NULL,
 							  [NSString stringWithFormat:NSLocalizedString(@"The selected trigger couldn't be deleted.\n\nMySQL said: %@", @"error deleting trigger informative message"),
 							   [connection lastErrorMessage]]);
 			
@@ -208,18 +223,29 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 	}
 
 	NSString *triggerName       = [triggerNameTextField stringValue];
-	NSString *triggerActionTime = ([triggerActionTimePopUpButton indexOfSelectedItem]) ? @"AFTER" : @"BEFORE";
-	NSString *triggerEvent      = @"";
 	
-	switch ([triggerEventPopUpButton indexOfSelectedItem]) 
+	NSString *triggerActionTime = @"";
+	switch ([triggerActionTimePopUpButton selectedTag])
 	{
-		case 0:
+		case SPTriggerActionTimeBeforeTag:
+			triggerActionTime = @"BEFORE";
+			break;
+			
+		case SPTriggerActionTimeAfterTag:
+			triggerActionTime = @"AFTER";
+			break;
+	}
+	
+	NSString *triggerEvent      = @"";
+	switch ([triggerEventPopUpButton selectedTag])
+	{
+		case SPTriggerEventInsertTag:
 			triggerEvent = @"INSERT";
 			break;
-		case 1:
+		case SPTriggerEventUpdateTag:
 			triggerEvent = @"UPDATE";
 			break;
-		case 2:
+		case SPTriggerEventDeleteTag:
 			triggerEvent = @"DELETE";
 			break;
 	}
@@ -256,7 +282,7 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 
 		SPBeginAlertSheet(NSLocalizedString(@"Error creating trigger", @"error creating trigger message"),
 						  NSLocalizedString(@"OK", @"OK button"),
-						  nil, nil, [NSApp mainWindow], self, @selector(_reopenTriggerSheet:returnCode:contextInfo:), nil,
+						  nil, nil, [NSApp mainWindow], self, @selector(_reopenTriggerSheet:returnCode:contextInfo:), NULL,
 						  [NSString stringWithFormat:NSLocalizedString(@"The specified trigger was unable to be created.\n\nMySQL said: %@", @"error creating trigger informative message"),
 						   createTriggerError]);
 	}
@@ -389,10 +415,7 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 			NSString *database = [tableDocumentInstance database];
 			NSIndexSet *selectedSet = [triggersTableView selectedRowIndexes];
 
-			NSUInteger row = [selectedSet lastIndex];
-
-			while (row != NSNotFound)
-			{
+			[selectedSet enumerateIndexesWithOptions:NSEnumerationReverse usingBlock:^(NSUInteger row, BOOL * _Nonnull stop) {
 				NSString *triggerName = [[triggerData objectAtIndex:row] objectForKey:SPTriggerName];
 				NSString *query = [NSString stringWithFormat:@"DROP TRIGGER %@.%@", [database backtickQuotedString], [triggerName backtickQuotedString]];
 
@@ -400,17 +423,15 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 
 				if ([connection queryErrored]) {
 					[[alert window] orderOut:self];
-					SPBeginAlertSheet(NSLocalizedString(@"Unable to delete trigger", @"error deleting trigger message"),
-									  NSLocalizedString(@"OK", @"OK button"),
-									  nil, nil, [tableDocumentInstance parentWindow], nil, nil, nil,
-									  [NSString stringWithFormat:NSLocalizedString(@"The selected trigger couldn't be deleted.\n\nMySQL said: %@", @"error deleting trigger informative message"), [connection lastErrorMessage]]);
-
+					SPOnewayAlertSheet(
+						NSLocalizedString(@"Unable to delete trigger", @"error deleting trigger message"),
+						[tableDocumentInstance parentWindow],
+						[NSString stringWithFormat:NSLocalizedString(@"The selected trigger couldn't be deleted.\n\nMySQL said: %@", @"error deleting trigger informative message"), [connection lastErrorMessage]]
+					);
 					// Abort loop
-					break;
+					*stop = YES;
 				}
-
-				row = [selectedSet indexLessThanIndex:row];
-			}
+			}];
 
 			[self _refreshTriggerDataForcingCacheRefresh:YES];
 		}
@@ -531,23 +552,9 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 	[triggerNameTextField setStringValue:[trigger objectForKey:SPTriggerName]];
 	[triggerStatementTextView setString:[trigger objectForKey:SPTriggerStatement]];
 	
-	// Timin title is different then what we have saved in the database (case difference)
-	for (NSUInteger i = 0; i < [[triggerActionTimePopUpButton itemArray] count]; i++)
-	{
-		if ([[[triggerActionTimePopUpButton itemTitleAtIndex:i] uppercaseString] isEqualToString:[[trigger objectForKey:SPTriggerActionTime] uppercaseString]]) {
-			[triggerActionTimePopUpButton selectItemAtIndex:i];
-			break;
-		}
-	}
+	[triggerActionTimePopUpButton selectItemWithTag:TagForActionTime([trigger objectForKey:SPTriggerActionTime])];
 	
-	// Event title is different then what we have saved in the database (case difference)
-	for (NSUInteger i = 0; i < [[triggerEventPopUpButton itemArray] count]; i++)
-	{
-		if ([[[triggerEventPopUpButton itemTitleAtIndex:i] uppercaseString] isEqualToString:[[trigger objectForKey:SPTriggerEvent] uppercaseString]]) {
-			[triggerEventPopUpButton selectItemAtIndex:i];
-			break;
-		}
-	}
+	[triggerEventPopUpButton selectItemWithTag:TagForEvent([trigger objectForKey:SPTriggerEvent])];
 	
 	// Change button label from Add to Edit
 	[confirmAddTriggerButton setTitle:NSLocalizedString(@"Save", @"Save trigger button label")];
@@ -628,17 +635,119 @@ static const NSString *SPTriggerSQLMode    = @"TriggerSQLMode";
 	[self performSelector:@selector(_openTriggerSheet) withObject:nil afterDelay:0.0];
 }
 
+/**
+ * Add any necessary preference observers to allow live updating on changes.
+ */
+- (void)_addPreferenceObservers
+{
+	// Register as an observer for the when the UseMonospacedFonts preference changes
+	[prefs addObserver:self forKeyPath:SPUseMonospacedFonts options:NSKeyValueObservingOptionNew context:NULL];
+
+	// Register observers for when the DisplayTableViewVerticalGridlines preference changes
+	[prefs addObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines options:NSKeyValueObservingOptionNew context:NULL];
+}
+
+/**
+ * Remove any previously added preference observers.
+ */
+- (void)_removePreferenceObservers
+{
+	[prefs removeObserver:self forKeyPath:SPUseMonospacedFonts];
+	[prefs removeObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines];
+}
+
+#pragma mark -
+#pragma mark Tableview delegate methods
+
+/**
+ * Called whenever the triggers table view selection changes.
+ */
+- (void)tableViewSelectionDidChange:(NSNotification *)notification
+{
+	[removeTriggerButton setEnabled:([triggersTableView numberOfSelectedRows] > 0)];
+}
+
+/**
+ * Alter the colour of cells displaying NULL values
+ */
+- (void)tableView:(NSTableView *)tableView willDisplayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
+{
+	if (![cell respondsToSelector:@selector(setTextColor:)]) {
+		return;
+	}
+
+	id value = [[triggerData objectAtIndex:rowIndex] objectForKey:[tableColumn identifier]];
+
+	[cell setTextColor:[value isNSNull] ? [NSColor lightGrayColor] : [NSColor blackColor]];
+}
+
+/**
+ * Double-click action on table cells - for the time being, return NO to disable editing.
+ */
+- (BOOL)tableView:(NSTableView *)tableView shouldEditTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
+{
+	if ([tableDocumentInstance isWorking]) return NO;
+
+	// Start Edit panel
+	if (((NSInteger)[triggerData count] > rowIndex) && [triggerData objectAtIndex:rowIndex]) {
+		[self _editTriggerAtIndex:rowIndex];
+	}
+
+	return NO;
+}
+
+/**
+ * Disable row selection while the document is working.
+ */
+- (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)rowIndex
+{
+	return (![tableDocumentInstance isWorking]);
+}
+
+#pragma mark -
+#pragma mark Textfield delegate methods
+
+/**
+ * Toggles the enabled state of confirm add trigger button based on the editing of the trigger's name.
+ */
+- (void)controlTextDidChange:(NSNotification *)notification
+{
+	[self _toggleConfirmAddTriggerButtonEnabled];
+}
+
 #pragma mark -
 
 - (void)dealloc
 {
-	[triggerData release], triggerData = nil;
-	[editedTrigger release], editedTrigger = nil;
+	SPClear(triggerData);
+	SPClear(editedTrigger);
 
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
-	[prefs removeObserver:self forKeyPath:SPUseMonospacedFonts];
+
+	[self _removePreferenceObservers];
 
 	[super dealloc];
 }
 
 @end
+
+#pragma mark -
+
+SPTriggerActionTimeTag TagForActionTime(NSString *mysql)
+{
+	NSString *uc = [mysql uppercaseString];
+	if([uc isEqualToString:@"BEFORE"]) return SPTriggerActionTimeBeforeTag;
+	if([uc isEqualToString:@"AFTER"])  return SPTriggerActionTimeAfterTag;
+	SPLog(@"Unknown trigger action time: %@",uc);
+	return -1;
+}
+
+SPTriggerEventTag TagForEvent(NSString *mysql)
+{
+	NSString *uc = [mysql uppercaseString];
+	if([uc isEqualToString:@"INSERT"]) return SPTriggerEventInsertTag;
+	if([uc isEqualToString:@"UPDATE"]) return SPTriggerEventUpdateTag;
+	if([uc isEqualToString:@"DELETE"]) return SPTriggerEventDeleteTag;
+	SPLog(@"Unknown trigger event: %@",uc);
+	return -1;
+}

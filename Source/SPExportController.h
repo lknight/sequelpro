@@ -33,7 +33,11 @@
 @class SPCustomQuery;
 @class SPTablesList;
 @class SPTableData;
-@class SPMySQLConnection; 
+@class SPMySQLConnection;
+@class SPServerSupport;
+@class SPCSVExporter;
+@class SPXMLExporter;
+@class SPExportFile;
 
 /**
  * @class SPExportController SPExportController.h
@@ -92,7 +96,7 @@
 	IBOutlet NSButton *exportCustomFilenameViewLabelButton;
 	IBOutlet NSView *exportCustomFilenameView;
 	IBOutlet NSTokenField *exportCustomFilenameTokenField;
-	IBOutlet NSTokenField *exportCustomFilenameTokensField;
+	IBOutlet NSTokenField *exportCustomFilenameTokenPool;
 	
 	// SQL
 	IBOutlet NSButton *exportSQLIncludeStructureCheck;
@@ -170,6 +174,7 @@
 	 * Database connection
 	 */
 	SPMySQLConnection *connection;
+	SPServerSupport *serverSupport;
 	
 	/**
 	 * Concurrent operation queue
@@ -230,6 +235,9 @@
 	NSInteger heightOffset2;
 	NSUInteger windowMinWidth;
 	NSUInteger windowMinHeigth;
+	
+	NSDictionary *localizedTokenNames;
+	
 }
 
 /**
@@ -246,10 +254,19 @@
  * @property connection Database connection
  */
 @property(readwrite, assign) SPMySQLConnection *connection;
+@property(readwrite, assign) SPServerSupport *serverSupport;
 
 - (void)exportTables:(NSArray *)table asFormat:(SPExportType)format usingSource:(SPExportSource)source;
 - (void)openExportErrorsSheetWithString:(NSString *)errors;
 - (void)displayExportFinishedGrowlNotification;
+
+/**
+ * Tries to set the export input to a given value or falls back to a default if not valid
+ * @param input The source to use
+ * @return YES if the source was accepted, NO otherwise
+ * @pre _switchTab needs to have been run before this method to decide valid inputs
+ */
+- (BOOL)setExportInput:(SPExportSource)input;
 
 // IB action methods
 - (IBAction)export:(id)sender;
@@ -269,5 +286,64 @@
 - (IBAction)toggleSQLIncludeContent:(NSButton *)sender;
 - (IBAction)toggleSQLIncludeDropSyntax:(NSButton *)sender;
 - (IBAction)toggleNewFilePerTable:(NSButton *)sender;
+
+#pragma mark - SPExportInitializer
+
+- (void)startExport;
+- (void)exportEnded;
+- (void)initializeExportUsingSelectedOptions;
+
+- (void)exportTables:(NSArray *)exportTables orDataArray:(NSArray *)dataArray;
+
+- (SPCSVExporter *)initializeCSVExporterForTable:(NSString *)table orDataArray:(NSArray *)dataArray;
+- (SPXMLExporter *)initializeXMLExporterForTable:(NSString *)table orDataArray:(NSArray *)dataArray;
+
+#pragma mark - SPExportFileUtilities
+
+- (void)writeCSVHeaderToExportFile:(SPExportFile *)file;
+- (void)writeXMLHeaderToExportFile:(SPExportFile *)file;
+
+- (void)errorCreatingExportFileHandles:(NSArray *)files;
+
+#pragma mark - SPExportFilenameUtilities
+
+- (void)updateDisplayedExportFilename;
+- (void)updateAvailableExportFilenameTokens;
+- (NSArray *)currentAllowedExportFilenameTokens;
+- (NSString *)generateDefaultExportFilename;
+- (NSString *)currentDefaultExportFileExtension;
+- (NSString *)expandCustomFilenameFormatUsingTableName:(NSString *)table;
+- (NSString *)customFilenamePathExtension;
+- (BOOL)isTableTokenAllowed;
+
+#pragma mark - SPExportSettingsPersistence
+
+- (IBAction)exportCurrentSettings:(id)sender;
+- (IBAction)importCurrentSettings:(id)sender;
+
+/**
+ * @return The current settings as a dictionary which can be serialized
+ */
+- (NSDictionary *)currentSettingsAsDictionary;
+
+/** Overwrite current export settings with those defined in dict
+ * @param dict The new settings to apply (passing nil is an error.)
+ * @param err  Errors while applying (will mostly be about invalid format, type)
+ *             Can pass NULL, if not interested in details.
+ *             Will NOT be changed unless the method also returns NO
+ * @return success
+ */
+- (BOOL)applySettingsFromDictionary:(NSDictionary *)dict error:(NSError **)err;
+
+/**
+ * @return A serialized form of the "custom filename" field
+ */
+- (NSArray *)currentCustomFilenameAsArray;
+
+/**
+ * @param tokenList A serialized form of the "custom filename" field
+ * @see currentCustomFilenameAsArray
+ */
+- (void)setCustomFilenameFromArray:(NSArray *)tokenList;
 
 @end

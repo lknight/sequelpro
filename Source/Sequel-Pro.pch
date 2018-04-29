@@ -25,14 +25,16 @@
 //  FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 //  OTHER DEALINGS IN THE SOFTWARE.
 //
-//  More info at <http://code.google.com/p/sequel-pro/>
+//  More info at <https://github.com/sequelpro/sequelpro>
 
 #ifdef __OBJC__
 	#import <Cocoa/Cocoa.h>
 
 	// Nearly every class uses constants
 	#import "SPConstants.h"
-	
+
+	#import "SPCompatibility.h"
+
 	// Make all our custom additions available
 	#import "SPCategoryAdditions.h"
 #endif

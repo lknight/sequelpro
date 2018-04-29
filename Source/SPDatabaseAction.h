@@ -30,6 +30,7 @@
 
 @class SPTablesList;
 @class SPMySQLConnection;
+@class SPCreateDatabaseInfo;
 
 @interface SPDatabaseAction : NSObject 
 {
@@ -52,5 +53,27 @@
  * @property tablesList
  */
 @property (readwrite, assign) SPTablesList *tablesList;
+
+/**
+ * This method creates a new database.
+ *
+ * @param dbInfo database name/charset/collation (charset, collation may be nil)
+ *
+ * @return success
+ *
+ * @see createDatabase:withEncoding:collation:
+ */
+- (BOOL)createDatabase:(SPCreateDatabaseInfo *)dbInfo;
+
+/**
+ * This method creates a new database.
+ *
+ * @param database  name of the new database to be created
+ * @param encoding  charset of the new database (can be nil to skip)
+ * @param collation sorting collation of the new database (can be nil)
+ *
+ * @return YES on success, otherwise NO
+ */
+- (BOOL)createDatabase:(NSString *)database withEncoding:(NSString *)encoding collation:(NSString *)collation;
 
 @end

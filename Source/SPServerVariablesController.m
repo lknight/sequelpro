@@ -53,6 +53,8 @@
 {
 	if ((self = [super initWithWindowNibName:@"DatabaseServerVariables"])) {
 		variables = [[NSMutableArray alloc] init];
+
+		prefs = [NSUserDefaults standardUserDefaults];
 	}
 	
 	return self;
@@ -60,8 +62,6 @@
 
 - (void)awakeFromNib
 {
-	prefs = [NSUserDefaults standardUserDefaults];
-	
 	// Set the process table view's vertical gridlines if required
 	[variablesTableView setGridStyleMask:([prefs boolForKey:SPDisplayTableViewVerticalGridlines]) ? NSTableViewSolidVerticalGridLineMask : NSTableViewGridNone];
 
@@ -74,8 +74,7 @@
 		[[column dataCell] setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
 	}
 	
-	// Register as an observer for the when the UseMonospacedFonts preference changes
-	[prefs addObserver:self forKeyPath:SPUseMonospacedFonts options:NSKeyValueObservingOptionNew context:NULL];
+	[self _addPreferenceObservers];
 }
 
 #pragma mark -
@@ -115,7 +114,7 @@
 	
 	// If the filtered array is allocated and it's not a reference to the processes array get rid of it
 	if ((variablesFiltered) && (variablesFiltered != variables)) {
-		[variablesFiltered release], variablesFiltered = nil;
+		SPClear(variablesFiltered);
 	}		
 }
 
@@ -126,7 +125,7 @@
 {
 	NSSavePanel *panel = [NSSavePanel savePanel];
 	
-	[panel setAllowedFileTypes:[NSArray arrayWithObject:@"cnf"]];
+	[panel setAllowedFileTypes:@[@"cnf"]];
 
 	[panel setExtensionHidden:NO];
 	[panel setAllowsOtherFileTypes:YES];
@@ -136,7 +135,7 @@
     [panel beginSheetModalForWindow:[self window] completionHandler:^(NSInteger returnCode) {
         if (returnCode == NSOKButton) {
             if ([variablesFiltered count] > 0) {
-                NSMutableString *variablesString = [NSMutableString stringWithFormat:@"# MySQL server variables for %@\n\n", [[(SPAppController*)[NSApp delegate] frontDocument] host]];
+                NSMutableString *variablesString = [NSMutableString stringWithFormat:@"# MySQL server variables for %@\n\n", [[SPAppDelegate frontDocument] host]];
                 
                 for (NSDictionary *variable in variablesFiltered)
                 {
@@ -292,7 +291,7 @@
 	// If the filtered array is allocated and its not a reference to the variables array
 	// relase it to prevent memory leaks upon the next allocation.
 	if ((variablesFiltered) && (variablesFiltered != variables)) {
-		[variablesFiltered release], variablesFiltered = nil;
+		SPClear(variablesFiltered);
 	}
 	
 	variablesFiltered = [[NSMutableArray alloc] init];
@@ -342,13 +341,10 @@
 	
 	if ((firstResponder == variablesTableView) && ([variablesTableView numberOfSelectedRows] > 0)) {
 		
-		NSString *string = @"";
+		NSMutableString *string = [[NSMutableString alloc] init];
 		NSIndexSet *rows = [variablesTableView selectedRowIndexes];
 		
-		NSUInteger i = [rows firstIndex];
-		
-		while (i != NSNotFound) 
-		{
+		[rows enumerateIndexesUsingBlock:^(NSUInteger i, BOOL * _Nonnull stop) {
 			if (i < [variablesFiltered count]) {
 				NSDictionary *variable = NSArrayObjectAtIndex(variablesFiltered, i);
 				
@@ -357,31 +353,51 @@
 				
 				// Decide what to include in the string
 				if (name && value) {
-					string = [string stringByAppendingFormat:@"%@ = %@\n", variableName, variableValue];
+					[string appendFormat:@"%@ = %@\n", variableName, variableValue];
 				}
 				else {
-					string = [string stringByAppendingFormat:@"%@\n", (name) ? variableName : variableValue];
+					[string appendFormat:@"%@\n", (name) ? variableName : variableValue];
 				}
 			}
-			
-			i = [rows indexGreaterThanIndex:i];
-		}
+		}];
 		
 		NSPasteboard *pasteBoard = [NSPasteboard generalPasteboard];
 		
 		// Copy the string to the pasteboard
-		[pasteBoard declareTypes:[NSArray arrayWithObjects:NSStringPboardType, nil] owner:nil];
+		[pasteBoard declareTypes:@[NSStringPboardType] owner:nil];
 		[pasteBoard setString:string forType:NSStringPboardType];
+		[string release];
 	}
+}
+
+/**
+ * Add any necessary preference observers to allow live updating on changes.
+ */
+- (void)_addPreferenceObservers
+{
+	// Register as an observer for the when the UseMonospacedFonts preference changes
+	[prefs addObserver:self forKeyPath:SPUseMonospacedFonts options:NSKeyValueObservingOptionNew context:NULL];
+
+	// Register to obeserve table view vertical grid line pref changes
+	[prefs addObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines options:NSKeyValueObservingOptionNew context:NULL];
+}
+
+/**
+ * Remove any previously added preference observers.
+ */
+- (void)_removePreferenceObservers
+{
+	[prefs removeObserver:self forKeyPath:SPUseMonospacedFonts];
+	[prefs removeObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines];
 }
 
 #pragma mark -
 
 - (void)dealloc
 {
-	[prefs removeObserver:self forKeyPath:SPUseMonospacedFonts];
+	[self _removePreferenceObservers];
 
-	[variables release], variables = nil;
+	SPClear(variables);
 	
 	[super dealloc];
 }

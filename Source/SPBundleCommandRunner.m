@@ -30,6 +30,7 @@
 
 #import "SPBundleCommandRunner.h"
 #import "SPDatabaseDocument.h"
+#import "SPAppController.h"
 
 // Defined to suppress warnings
 @interface NSObject (SPBundleMethods)
@@ -91,11 +92,11 @@
 	
 	[fm removeItemAtPath:scriptFilePath error:nil];
 	[fm removeItemAtPath:stdoutFilePath error:nil];
-	if([[NSApp delegate] lastBundleBlobFilesDirectory] != nil)
-		[fm removeItemAtPath:[[NSApp delegate] lastBundleBlobFilesDirectory] error:nil];
+	if([SPAppDelegate lastBundleBlobFilesDirectory] != nil)
+		[fm removeItemAtPath:[SPAppDelegate lastBundleBlobFilesDirectory] error:nil];
 	
 	if([shellEnvironment objectForKey:SPBundleShellVariableBlobFileDirectory])
-		[[NSApp delegate] setLastBundleBlobFilesDirectory:[shellEnvironment objectForKey:SPBundleShellVariableBlobFileDirectory]];
+		[SPAppDelegate setLastBundleBlobFilesDirectory:[shellEnvironment objectForKey:SPBundleShellVariableBlobFileDirectory]];
 	
 	// Parse first line for magic header #! ; if found save the script content and run the command after #! with that file.
 	// This allows to write perl, ruby, osascript scripts natively.
@@ -163,21 +164,29 @@
 	if([doc getConnection] == nil)
 		doc = nil;
 	else {
-		for (NSWindow *aWindow in [NSApp orderedWindows]) {
-			if([[[[aWindow windowController] class] description] isEqualToString:@"SPWindowController"]) {
-				if([[[aWindow windowController] documents] count] && [[[[[[aWindow windowController] documents] objectAtIndex:0] class] description] isEqualToString:@"SPDatabaseDocument"]) {
+		for (NSWindow *aWindow in [NSApp orderedWindows])
+		{
+			if ([[[[aWindow windowController] class] description] isEqualToString:@"SPWindowController"]) {
+
+				SPWindowController *windowController = (SPWindowController *)[aWindow windowController];
+				NSArray *documents = [windowController documents];
+
+				if ([documents count] && [[[[documents objectAtIndex:0] class] description] isEqualToString:@"SPDatabaseDocument"]) {
 					// Check if connected
-					if([[[[aWindow windowController] documents] objectAtIndex:0] getConnection])
-						doc = [[[aWindow windowController] documents] objectAtIndex:0];
-					else
+					if ([[documents objectAtIndex:0] getConnection]) {
+						doc = [documents objectAtIndex:0];
+					}
+					else {
 						doc = nil;
+					}
 				}
 			}
-			if(doc) break;
+
+			if (doc) break;
 		}
 	}
 	
-	if(doc != nil) {
+	if (doc != nil) {
 		
 		[doc setProcessID:uuid];
 		
@@ -218,7 +227,7 @@
 		// register command
 		pid = [bashTask processIdentifier];
 		NSDictionary *dict = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInteger:pid], @"pid",
-							  (contextInfo)?:[NSDictionary dictionary], @"contextInfo",
+							  (contextInfo)?: @{}, @"contextInfo",
 							  @"bashcommand", @"type",
 							  [[NSDate date] descriptionWithCalendarFormat:@"%H:%M:%S" timeZone:nil locale:[[NSUserDefaults standardUserDefaults] dictionaryRepresentation]], @"starttime",
 							  nil];
@@ -296,7 +305,7 @@
 	// Read STDOUT saved to file 
 	if([fm fileExistsAtPath:stdoutFilePath isDirectory:nil]) {
 		NSString *stdoutContent = [NSString stringWithContentsOfFile:stdoutFilePath encoding:NSUTF8StringEncoding error:nil];
-		if(bashTask) [bashTask release], bashTask = nil;
+		if(bashTask) SPClear(bashTask);
 		[fm removeItemAtPath:stdoutFilePath error:nil];
 		if(stdoutContent != nil) {
 			if (status == 0) {

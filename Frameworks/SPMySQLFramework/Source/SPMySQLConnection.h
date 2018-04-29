@@ -51,6 +51,7 @@
 	NSString *sslKeyFilePath;
 	NSString *sslCertificatePath;
 	NSString *sslCACertificatePath;
+	NSString *sslCipherList;
 
 	// MySQL connection details and state
 	struct st_mysql *mySQLConnection;
@@ -84,10 +85,8 @@
 	CGFloat keepAliveInterval;
 	uint64_t lastKeepAliveTime;
 	NSUInteger keepAlivePingFailures;
-	NSThread *keepAliveThread;
-	pthread_t keepAlivePingThread_t;
-	BOOL keepAlivePingThreadActive;
-	BOOL keepAliveLastPingSuccess;
+	volatile NSThread *keepAliveThread;
+	volatile BOOL keepAlivePingThreadActive;
 	BOOL keepAliveLastPingBlocked;
 
 	// Encoding details - and also a record of any previous encoding to allow
@@ -99,7 +98,8 @@
 	BOOL previousEncodingUsesLatin1Transport;
 
 	// Server details
-	NSString *serverVersionString;
+	NSString *serverVariableVersion;
+	unsigned long serverVersionNumber;
 
 	// Error state for the last query or connection state
 	NSUInteger queryErrorID;
@@ -126,6 +126,10 @@
 
 	// Queries
 	BOOL retryQueriesOnConnectionFailure;
+	
+	SPMySQLClientFlags clientFlags;
+	
+	NSString *_debugLastConnectedEvent;
 }
 
 #pragma mark -
@@ -143,6 +147,15 @@
 @property (readwrite, retain) NSString *sslCertificatePath;
 @property (readwrite, retain) NSString *sslCACertificatePath;
 
+/**
+ * List of supported ciphers for SSL/TLS connections.
+ * This is a colon-separated string of names as used by
+ * `openssl ciphers`. The order of entries specifies
+ * their preference (earlier = better).
+ * A value of nil (default) means SPMySQL will use its built-in cipher list.
+ */
+@property (readwrite, retain) NSString *sslCipherList;
+
 @property (readwrite, assign) NSUInteger timeout;
 @property (readwrite, assign) BOOL useKeepAlive;
 @property (readwrite, assign) CGFloat keepAliveInterval;
@@ -153,6 +166,14 @@
 @property (readwrite, assign) BOOL delegateQueryLogging;
 
 @property (readwrite, assign) BOOL lastQueryWasCancelled;
+
+/**
+ * The mysql client capability flags to set when connecting.
+ * See CLIENT_* in mysql.h
+ */
+@property (readwrite, assign, nonatomic) SPMySQLClientFlags clientFlags;
+- (void)addClientFlags:(SPMySQLClientFlags)opts;
+- (void)removeClientFlags:(SPMySQLClientFlags)opts;
 
 #pragma mark -
 #pragma mark Connection and disconnection
@@ -167,6 +188,7 @@
 - (BOOL)isConnected;
 - (BOOL)isConnectedViaSSL;
 - (BOOL)checkConnection;
+- (BOOL)checkConnectionIfNecessary;
 - (double)timeConnected;
 - (BOOL)userTriggeredDisconnect;
 

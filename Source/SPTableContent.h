@@ -48,10 +48,11 @@
 #ifndef SP_CODA
 @class SPSplitView;
 #endif
+@class SPTableContentFilterController;
 
 #import "SPDatabaseContentViewDelegate.h"
 
-@interface SPTableContent : NSObject <NSTableViewDelegate, NSTableViewDataSource, NSComboBoxDataSource, NSComboBoxDelegate>
+@interface SPTableContent : NSObject <NSTableViewDelegate, NSTableViewDataSource, NSComboBoxDataSource, NSComboBoxDelegate, SPDatabaseContentViewDelegate>
 {	
 	IBOutlet SPDatabaseDocument *tableDocumentInstance;
 	IBOutlet id tablesListInstance;
@@ -91,7 +92,10 @@
 	IBOutlet NSButton *paginationNextButton;
 #ifndef SP_CODA
 	IBOutlet NSView *contentViewPane;
+	IBOutlet NSViewController *paginationViewController;
 	IBOutlet NSView *paginationView;
+	IBOutlet NSBox *paginationBox;
+	NSPopover *paginationPopover;
 #endif
 	IBOutlet NSTextField *paginationPageField;
 #ifndef SP_CODA
@@ -113,13 +117,14 @@
 
 	// Temporary to avoid nib conflicts during WIP
 	IBOutlet SPSplitView *contentSplitView;
+
+	IBOutlet SPTableContentFilterController *filterControllerInstance;
 #endif
 	SPMySQLConnection *mySQLConnection;
 
 	BOOL _mainNibLoaded;
 	BOOL isWorking;
 	pthread_mutex_t tableValuesLock;
-	NSCondition *tableLoadingCondition;
 #ifndef SP_CODA
 	NSMutableArray *nibObjectsToRelease;
 #endif
@@ -277,7 +282,7 @@
 - (void)autosizeColumns;
 - (BOOL)saveRowOnDeselect;
 - (void)sortTableTaskWithColumn:(NSTableColumn *)tableColumn;
-- (void)showErrorSheetWith:(id)error;
+- (void)showErrorSheetWith:(NSArray *)error;
 - (void)processFieldEditorResult:(id)data contextInfo:(NSDictionary*)contextInfo;
 - (void)saveViewCellValue:(id)anObject forTableColumn:(NSTableColumn *)aTableColumn row:(NSUInteger)rowIndex;
 
@@ -299,9 +304,19 @@
 - (void)setFilterTableData:(NSData *)arcData;
 - (NSData *)filterTableData;
 
-- (NSString *)escapeFilterArgument:(NSString *)argument againstClause:(NSString *)clause;
+//- (NSString *)escapeFilterArgument:(NSString *)argument againstClause:(NSString *)clause;
 - (void)openContentFilterManager;
 
 - (NSArray *)fieldEditStatusForRow:(NSInteger)rowIndex andColumn:(NSInteger)columnIndex;
+
+#pragma mark - SPTableContentDataSource
+
+- (BOOL)cellValueIsDisplayedAsHexForColumn:(NSUInteger)columnIndex;
+
+#pragma mark - SPTableContentFilter
+
+- (void)makeContentFilterHaveFocus;
+- (void)updateFilterTableClause:(id)currentValue;
+- (NSString*)escapeFilterTableDefaultOperator:(NSString*)op;
 
 @end

@@ -33,7 +33,7 @@
 
 #define FAVORITE_NAME_FONT_SIZE 12.0f
 
-@interface SPActivityTextFieldCell (PrivateAPI)
+@interface SPActivityTextFieldCell ()
 
 - (NSAttributedString *)constructSubStringAttributedString;
 - (NSAttributedString *)attributedStringForFavoriteName;
@@ -206,7 +206,7 @@ static inline NSRect SPTextLinkRectFromCellRect(NSRect inRect)
 /**
  * Allow hit tracking for cancel functionality
  */
-- (NSUInteger)hitTestForEvent:(NSEvent *)event inRect:(NSRect)cellFrame ofView:(NSView *)controlView
+- (NSCellHitResult)hitTestForEvent:(NSEvent *)event inRect:(NSRect)cellFrame ofView:(NSView *)controlView
 {
 	return NSCellHitContentArea | NSCellHitTrackableArea;
 }
@@ -324,17 +324,15 @@ static inline NSRect SPTextLinkRectFromCellRect(NSRect inRect)
  */
 - (void)dealloc 
 {
-	if(activityName) [activityName release], activityName = nil;
-	if(activityInfo) [activityInfo release], activityInfo = nil;
-	if(contextInfo) [contextInfo release], contextInfo = nil;
-	if(cancelButton) [cancelButton release];
+	if(activityName) SPClear(activityName);
+	if(activityInfo) SPClear(activityInfo);
+	if(contextInfo) SPClear(contextInfo);
+	if(cancelButton) SPClear(cancelButton);
 
 	[super dealloc];
 }
 
-@end
-
-@implementation SPActivityTextFieldCell (PrivateAPI)
+#pragma mark - Private API
 
 /**
  * Constructs the attributed string to be used as the cell's substring.

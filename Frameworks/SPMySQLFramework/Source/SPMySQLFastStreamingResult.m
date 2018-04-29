@@ -32,6 +32,7 @@
 #import "SPMySQL Private APIs.h"
 #import "SPMySQLArrayAdditions.h"
 #include <pthread.h>
+#include <stdlib.h>
 
 static id NSNullPointer;
 
@@ -360,7 +361,7 @@ typedef struct st_spmysqlstreamingrowdata {
 		newRowStore->nextRow = NULL;
 
 		// Set up the row data store - a char* - and copy in the data if there is any.
-		newRowStore->data = malloc(sizeOfChar * rowDataLength);
+		newRowStore->data = calloc(rowDataLength, sizeOfChar);
 		for (i = 0; i < numberOfFields; i++) {
 			if (theRow[i] != NULL) {
 				memcpy(newRowStore->data+dataCopiedLength, theRow[i], fieldLengths[i]);
@@ -391,9 +392,7 @@ typedef struct st_spmysqlstreamingrowdata {
 	}
 
 	// Update the connection's error statuses to reflect any errors during the content download
-	[parentConnection _updateLastErrorID:NSNotFound];
-	[parentConnection _updateLastErrorMessage:nil];	
-	[parentConnection _updateLastSqlstate:nil];
+	[parentConnection _updateLastErrorInfos];
 
 	// Unlock the parent connection now all data has been retrieved
     [parentConnection _unlockConnection];

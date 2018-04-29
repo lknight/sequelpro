@@ -38,18 +38,11 @@
 /**
  * This method clones an existing database.
  *
- * @param NSString sourceDatabaseName the name of the source database
- * @param NSString targetDatabaseName the name of the target database
- * @result BOOL success
- */
-- (BOOL)copyDatabaseFrom:(NSString *)sourceDatabaseName to:(NSString *)targetDatabaseName withContent:(BOOL)copyWithContent;
-
-/**
- * This method creates a new database.
+ * @param sourceDatabase     information tuple about source database
+ * @param targetDatabaseName the name of the target database
  *
- * @param NSString newDatabaseName name of the new database to be created
- * @return BOOL YES on success, otherwise NO
+ * @result success
  */
-- (BOOL)createDatabase:(NSString *)newDatabaseName;
+- (BOOL)copyDatabaseFrom:(SPCreateDatabaseInfo *)sourceDatabase to:(NSString *)targetDatabaseName withContent:(BOOL)copyWithContent;
 
 @end

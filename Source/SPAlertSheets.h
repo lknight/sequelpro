@@ -39,7 +39,6 @@
                           modalDelegate:(id)modalDelegate
                          didEndSelector:(SEL)didEndSelector
                             contextInfo:(void *)contextInfo
-                                    msg:(NSString *)msg
                                infoText:(NSString *)infoText
                              returnCode:(NSInteger *)returnCode;
 
@@ -55,4 +54,18 @@ void SPBeginAlertSheet(
 		 SEL didEndSelector,
 		void *contextInfo,
 	NSString *msg
+);
+
+void SPOnewayAlertSheet(
+	NSString *title,
+	NSWindow *docWindow,
+	NSString *msg
+);
+
+void SPOnewayAlertSheetWithStyle(
+	NSString *title,
+	NSString *defaultButton,
+	NSWindow *docWindow,
+	NSString *msg,
+	NSAlertStyle alertStyle
 );

@@ -37,13 +37,10 @@
 @class SPAboutController;
 @class SPDatabaseDocument;
 @class SPBundleEditorController;
+@class SPWindowController;
 
 @interface SPAppController : NSObject <FRFeedbackReporterDelegate, NSApplicationDelegate, NSOpenSavePanelDelegate, NSFileManagerDelegate>
 {
-	IBOutlet NSWindow* bundleEditorWindow;
-
-	BOOL isNewFavorite;
-
 	SPAboutController *aboutController;
 	SPPreferenceController *prefsController;
 	SPBundleEditorController *bundleEditorController;
@@ -119,5 +116,26 @@
 
 - (void)addHTMLOutputController:(id)controller;
 - (void)removeHTMLOutputController:(id)controller;
+
+#pragma mark - SPAppleScriptSupport
+
+- (NSArray *)orderedDocuments;
+- (void)insertInOrderedDocuments:(SPDatabaseDocument *)doc;
+- (NSArray *)orderedWindows;
+- (id)handleQuitScriptCommand:(NSScriptCommand *)command;
+- (id)handleOpenScriptCommand:(NSScriptCommand *)command;
+
+#pragma mark - SPWindowManagement
+
+- (IBAction)newWindow:(id)sender;
+- (IBAction)newTab:(id)sender;
+- (IBAction)duplicateTab:(id)sender;
+
+- (SPWindowController *)newWindow;
+- (SPDatabaseDocument *)makeNewConnectionTabOrWindow;
+- (SPWindowController *)frontController;
+
+- (NSWindow *)frontDocumentWindow;
+- (void)tabDragStarted:(id)sender;
 
 @end

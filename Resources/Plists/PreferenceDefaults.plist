@@ -127,8 +127,6 @@
 	<false/>
 	<key>FilterTableDefaultOperator</key>
 	<string>LIKE &apos;%@%&apos;</string>
-	<key>GlobalResultTableFont</key>
-	<data>BAtzdHJlYW10eXBlZIHoA4QBQISEhAZOU0ZvbnQehIQITlNPYmplY3QAhYQBaSSEBVszNmNdBgAAABoAAAD//kwAdQBjAGkAZABhAEcAcgBhAG4AZABlAAAAhAFmC4QBYwCYAZgAmACG</data>
 	<key>GrowlEnabled</key>
 	<true/>
 	<key>KeepAliveInterval</key>
@@ -148,8 +146,6 @@
 	<key>LongRunningQueryNotificationTime</key>
 	<real>3</real>
 	<key>NewFieldsAllowNulls</key>
-	<true/>
-	<key>NoBOMforSQLdumpFile</key>
 	<true/>
 	<key>NullValue</key>
 	<string>NULL</string>
@@ -189,8 +185,6 @@
 	<true/>
 	<key>SPFirstRun</key>
 	<true/>
-	<key>SQLExportUseCompression</key>
-	<false/>
 	<key>SSHMultiplexingEnabled</key>
 	<false/>
 	<key>TableInformationPanelCollapsed</key>

@@ -57,6 +57,8 @@
 	IBOutlet id delegate;
 	
 	NSArray *colorList;
+	
+	BOOL isOSAtLeast10_9_0;
 }
 
 @property (nonatomic,readwrite,assign) NSInteger selectedTag;
@@ -68,8 +70,8 @@
 
 @end
 
-@interface NSObject (SPColorSelectorViewDelegate)
-
+@protocol SPColorSelectorViewDelegate <NSObject>
+@optional
 /**
  * Called on a delegate when the selection did (really) change
  * @param aView The changed view

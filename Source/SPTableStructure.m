@@ -32,7 +32,6 @@
 #import "SPTableStructure.h"
 #import "SPDatabaseStructure.h"
 #import "SPDatabaseDocument.h"
-#import "SPDatabaseViewController.h"
 #import "SPTableInfo.h"
 #import "SPTablesList.h"
 #import "SPTableData.h"
@@ -43,18 +42,81 @@
 #import "SPIndexesController.h"
 #import "RegexKitLite.h"
 #import "SPTableFieldValidation.h"
-#import "SPTableStructureLoading.h"
 #import "SPThreadAdditions.h"
 #import "SPServerSupport.h"
+#import "SPExtendedTableInfo.h"
+#import "SPFunctions.h"
+#import "SPPillAttachmentCell.h"
+#import "SPIdMenu.h"
+#import "SPComboBoxCell.h"
 
 #import <SPMySQL/SPMySQL.h>
 
 static NSString *SPRemoveField = @"SPRemoveField";
 static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 
-@interface SPTableStructure (PrivateAPI)
+@interface SPFieldTypeHelp ()
+@property(copy,readwrite) NSString *typeName;
+@property(copy,readwrite) NSString *typeDefinition;
+@property(copy,readwrite) NSString *typeRange;
+@property(copy,readwrite) NSString *typeDescription;
+@end
 
+@implementation SPFieldTypeHelp
+
+@synthesize typeName;
+@synthesize typeDefinition;
+@synthesize typeRange;
+@synthesize typeDescription;
+
+- (void)dealloc
+{
+	[self setTypeName:nil];
+	[self setTypeDefinition:nil];
+	[self setTypeRange:nil];
+	[self setTypeDescription:nil];
+	[super dealloc];
+}
+
+@end
+
+static inline SPFieldTypeHelp *MakeFieldTypeHelp(NSString *typeName,NSString *typeDefinition,NSString *typeRange,NSString *typeDescription) {
+	SPFieldTypeHelp *obj = [[SPFieldTypeHelp alloc] init];
+	
+	[obj setTypeName:       typeName];
+	[obj setTypeDefinition: typeDefinition];
+	[obj setTypeRange:      typeRange];
+	[obj setTypeDescription:typeDescription];
+	
+	return [obj autorelease];
+}
+
+struct _cmpMap {
+	NSString *title; // the title of the "pill"
+	NSString *tooltipPart; // the tooltip of the menuitem
+	NSString *cmpWith; // the string to match against
+};
+
+/**
+ * This function will compare the representedObject of every item in menu against
+ * every map->cmpWith. If they match it will append a pill-like (similar to a TokenFieldCell's token)
+ * element labelled map->title to the menu item's title. If map->tooltipPart is set,
+ * it will also be added to the menu item's tooltip.
+ *
+ * This is used with the encoding/collation popup menus to add visual indicators for the
+ * table-level and default encoding/collation.
+ */
+static void _BuildMenuWithPills(NSMenu *menu,struct _cmpMap *map,size_t mapEntries);
+
+@interface SPTableStructure ()
+
+- (void)sheetDidEnd:(id)sheet returnCode:(NSInteger)returnCode contextInfo:(NSString *)contextInfo;
 - (void)_removeFieldAndForeignKey:(NSNumber *)removeForeignKey;
+- (NSString *)_buildPartialColumnDefinitionString:(NSDictionary *)theRow;
+
+#pragma mark - SPTableStructureDelegate
+
+- (void)_displayFieldTypeHelpIfPossible:(SPComboBoxCell *)cell;
 
 @end
 
@@ -116,12 +178,11 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	[indexesTableView setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
 #endif
 
-	extraFieldSuggestions = [[NSArray arrayWithObjects:
-		@"None",
-		@"auto_increment",
-		@"on update CURRENT_TIMESTAMP",
-		@"SERIAL DEFAULT VALUE",
-		nil
+	extraFieldSuggestions = [@[
+			@"None",
+			@"auto_increment",
+			@"on update CURRENT_TIMESTAMP",
+			@"SERIAL DEFAULT VALUE"
 	] retain];
 
 	// Note that changing the contents or ordering of this array will affect the implementation of 
@@ -157,6 +218,7 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 		SPMySQLLongBlobType,
 		SPMySQLBinaryType,
 		SPMySQLVarBinaryType,
+		SPMySQLJsonType,
 		SPMySQLEnumType,
 		SPMySQLSetType,
 		@"--------",
@@ -253,12 +315,12 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	BOOL allowNull = [[[tableDataInstance statusValueForKey:@"Engine"] uppercaseString] isEqualToString:@"CSV"] ? NO : [prefs boolForKey:SPNewFieldsAllowNulls];
 	
 	[tableFields insertObject:[NSMutableDictionary
-							   dictionaryWithObjects:[NSArray arrayWithObjects:@"", @"INT", @"", @"0", @"0", @"0", allowNull ? @"1" : @"0", @"", [prefs stringForKey:SPNullValue], @"None", @"", [NSNumber numberWithInt:0], [NSNumber numberWithInt:0], nil]
-							   forKeys:[NSArray arrayWithObjects:@"name", @"type", @"length", @"unsigned", @"zerofill", @"binary", @"null", @"Key", @"default", @"Extra", @"comment", @"encoding", @"collation", nil]]
+							   dictionaryWithObjects:[NSArray arrayWithObjects:@"", @"INT", @"", @"0", @"0", @"0", allowNull ? @"1" : @"0", @"", [prefs stringForKey:SPNullValue], @"None", @"", nil]
+							   forKeys:@[@"name", @"type", @"length", @"unsigned", @"zerofill", @"binary", @"null", @"Key", @"default", @"Extra", @"comment"]]
 					  atIndex:insertIndex];
 #else
 	[tableFields insertObject:[NSMutableDictionary
-							   dictionaryWithObjects:[NSArray arrayWithObjects:@"", @"INT", @"", @"0", @"0", @"0", @"1", @"", @"NULL", @"None", @"", [NSNumber numberWithInt:0], [NSNumber numberWithInt:0], nil]
+							   dictionaryWithObjects:[NSArray arrayWithObjects:@"", @"INT", @"", @"0", @"0", @"0", @"1", @"", @"NULL", @"None", @"", @0, @0, nil]
 							   forKeys:[NSArray arrayWithObjects:@"name", @"type", @"length", @"unsigned", @"zerofill", @"binary", @"null", @"Key", @"default", @"Extra", @"comment", @"encoding", @"collation", nil]]
 					  atIndex:insertIndex];
 #endif
@@ -478,7 +540,7 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 
 		[resetAutoIncrementLine setHidden:YES];
 
-		if ([[tableDocumentInstance valueForKeyPath:@"tableTabView"] indexOfTabViewItem:[[tableDocumentInstance valueForKeyPath:@"tableTabView"] selectedTabViewItem]] == 0)
+		if ([tableDocumentInstance currentlySelectedView] == SPTableViewStructure)
 			[resetAutoIncrementLine setHidden:NO];
 
 		// Begin the sheet
@@ -491,7 +553,7 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 		[resetAutoIncrementValue setStringValue:@"1"];
 	}
 	else if ([sender tag] == 2) {
-		[self setAutoIncrementTo:@"1"];
+		[self setAutoIncrementTo:@1];
 	}
 #endif
 }
@@ -506,9 +568,19 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	[theSheet orderOut:nil];
 
 	if (returnCode == NSAlertDefaultReturn) {
-		[self setAutoIncrementTo:[[resetAutoIncrementValue stringValue] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+		[self takeAutoIncrementFrom:resetAutoIncrementValue];
 	}
 #endif
+}
+
+- (void)takeAutoIncrementFrom:(NSTextField *)field
+{
+	id obj = [field objectValue];
+	//nil is handled by -setAutoIncrementTo:
+	if(obj && ![obj isKindOfClass:[NSNumber class]]) {
+		[NSException raise:NSInternalInconsistencyException format:@"[$field objectValue] should return NSNumber *, but was %@",[obj class]];
+	}
+	[self setAutoIncrementTo:(NSNumber *)obj];
 }
 
 /**
@@ -526,7 +598,7 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 		NSNumber *removeKey = [NSNumber numberWithBool:[(NSString *)contextInfo isEqualToString:SPRemoveFieldAndForeignKey]];
 
 		if ([NSThread isMainThread]) {
-			[NSThread detachNewThreadWithName:@"SPTableStructure field and key removal task" 
+			[NSThread detachNewThreadWithName:SPCtxt(@"SPTableStructure field and key removal task", tableDocumentInstance)
 									   target:self 
 									 selector:@selector(_removeFieldAndForeignKey:) 
 									   object:removeKey];
@@ -601,13 +673,13 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
  *
  * @param valueAsString The new auto_increment integer as NSString
  */
-- (void)setAutoIncrementTo:(NSString*)valueAsString
+- (void)setAutoIncrementTo:(NSNumber *)value
 {
 	NSString *selTable = [tablesListInstance tableName];
 
 	if (selTable == nil || ![selTable length]) return;
 
-	if (valueAsString == nil || ![valueAsString length]) {
+	if (value == nil) {
 		// reload data and bail
 		[tableDataInstance resetAllData];
 #ifndef SP_CODA
@@ -617,24 +689,20 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 		return;
 	}
 
-	NSNumberFormatter *formatter = [[NSNumberFormatter alloc] init];
-	[formatter setNumberStyle:NSNumberFormatterDecimalStyle];
-	NSNumber *autoIncValue = [formatter numberFromString:valueAsString];
-	[formatter release];
-
-	[mySQLConnection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ AUTO_INCREMENT = %@", [selTable backtickQuotedString], [autoIncValue stringValue]]];
+	// only int and float types can be AUTO_INCREMENT and right now BIGINT = 64 Bit (<= long long) is the largest type mysql supports
+	[mySQLConnection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ AUTO_INCREMENT = %llu", [selTable backtickQuotedString], [value unsignedLongLongValue]]];
 
 	if ([mySQLConnection queryErrored]) {
-		SPBeginAlertSheet(NSLocalizedString(@"Error", @"error"),
-						  NSLocalizedString(@"OK", @"OK button"),
-						  nil, nil, [NSApp mainWindow], nil, nil, nil,
-						  [NSString stringWithFormat:NSLocalizedString(@"An error occurred while trying to reset AUTO_INCREMENT of table '%@'.\n\nMySQL said: %@", @"error resetting auto_increment informative message"),
-								selTable, [mySQLConnection lastErrorMessage]]);
+		SPOnewayAlertSheet(
+			NSLocalizedString(@"Error", @"error"),
+			[NSApp mainWindow],
+			[NSString stringWithFormat:NSLocalizedString(@"An error occurred while trying to reset AUTO_INCREMENT of table '%@'.\n\nMySQL said: %@", @"error resetting auto_increment informative message"),selTable, [mySQLConnection lastErrorMessage]]
+		);
 	}
 
 	// reload data
 	[tableDataInstance resetStatusData];
-	if([[tableDocumentInstance valueForKeyPath:@"tableTabView"] indexOfTabViewItem:[[tableDocumentInstance valueForKeyPath:@"tableTabView"] selectedTabViewItem]] == 3) {
+	if([tableDocumentInstance currentlySelectedView] == SPTableViewStatus) {
 		[tableDataInstance resetAllData];
 #ifndef SP_CODA
 		[extendedTableInfoInstance loadTable:selTable];
@@ -735,6 +803,129 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 		[[tableSourceView window] endEditingFor:nil];
 	}
 
+	NSDictionary *theRow = [tableFields objectAtIndex:currentlyEditingRow];
+
+	if ([autoIncrementIndex isEqualToString:@"PRIMARY KEY"]) {
+		// If the field isn't set to be unsigned and we're making it the primary key then make it unsigned
+		if (![[theRow objectForKey:@"unsigned"] boolValue]) {
+			NSMutableDictionary *rowCpy = [theRow mutableCopy];
+			[rowCpy setObject:@YES forKey:@"unsigned"];
+			theRow = [rowCpy autorelease];
+		}
+	}
+
+	NSMutableString *queryString = [NSMutableString stringWithFormat:@"ALTER TABLE %@",[selectedTable backtickQuotedString]];
+	[queryString appendString:@" "];
+	if (isEditingNewRow) {
+		[queryString appendString:@"ADD"];
+	}
+	else {
+		[queryString appendFormat:@"CHANGE %@",[[oldRow objectForKey:@"name"] backtickQuotedString]];
+	}
+	[queryString appendString:@" "];
+	[queryString appendString:[self _buildPartialColumnDefinitionString:theRow]];
+
+	// Process index if given for fields set to AUTO_INCREMENT
+	if (autoIncrementIndex) {
+		// User wants to add PRIMARY KEY
+		if ([autoIncrementIndex isEqualToString:@"PRIMARY KEY"]) {
+			[queryString appendString:@"\n PRIMARY KEY"];
+
+			// Add AFTER ... only if the user added a new field
+			if (isEditingNewRow) {
+				[queryString appendFormat:@"\n AFTER %@", [[[tableFields objectAtIndex:(currentlyEditingRow -1)] objectForKey:@"name"] backtickQuotedString]];
+			}
+		}
+		else {
+			// Add AFTER ... only if the user added a new field
+			if (isEditingNewRow) {
+				[queryString appendFormat:@"\n AFTER %@", [[[tableFields objectAtIndex:(currentlyEditingRow -1)] objectForKey:@"name"] backtickQuotedString]];
+			}
+
+			[queryString appendFormat:@"\n, ADD %@ (%@)", autoIncrementIndex, [[theRow objectForKey:@"name"] backtickQuotedString]];
+		}
+	}
+	// Add AFTER ... only if the user added a new field
+	else if (isEditingNewRow) {
+		[queryString appendFormat:@"\n AFTER %@", [[[tableFields objectAtIndex:(currentlyEditingRow -1)] objectForKey:@"name"] backtickQuotedString]];
+	}
+
+	isCurrentExtraAutoIncrement = NO;
+	autoIncrementIndex = nil;
+
+	// Execute query
+	[mySQLConnection queryString:queryString];
+
+	if (![mySQLConnection queryErrored]) {
+		isEditingRow = NO;
+		isEditingNewRow = NO;
+		currentlyEditingRow = -1;
+
+		[tableDataInstance resetAllData];
+		[tableDocumentInstance setStatusRequiresReload:YES];
+		[self loadTable:selectedTable];
+
+		// Mark the content table for refresh
+		[tableDocumentInstance setContentRequiresReload:YES];
+
+		// Query the structure of all databases in the background
+		[[tableDocumentInstance databaseStructureRetrieval] queryDbStructureInBackgroundWithUserInfo:[NSDictionary dictionaryWithObjectsAndKeys:@YES, @"forceUpdate", selectedTable, @"affectedItem", [NSNumber numberWithInteger:[tablesListInstance tableType]], @"affectedItemType", nil]];
+
+		return YES;
+	}
+	else {
+		alertSheetOpened = YES;
+		if([mySQLConnection lastErrorID] == 1146) { // If the current table doesn't exist anymore
+			SPOnewayAlertSheet(
+				NSLocalizedString(@"Error", @"error"),
+				[tableDocumentInstance parentWindow],
+				[NSString stringWithFormat:NSLocalizedString(@"An error occurred while trying to alter table '%@'.\n\nMySQL said: %@", @"error while trying to alter table message"),selectedTable, [mySQLConnection lastErrorMessage]]
+			);
+
+			isEditingRow = NO;
+			isEditingNewRow = NO;
+			currentlyEditingRow = -1;
+			[tableFields removeAllObjects];
+			[tableSourceView reloadData];
+			[indexesTableView reloadData];
+			[addFieldButton setEnabled:NO];
+			[duplicateFieldButton setEnabled:NO];
+			[removeFieldButton setEnabled:NO];
+#ifndef SP_CODA
+			[addIndexButton setEnabled:NO];
+			[removeIndexButton setEnabled:NO];
+			[editTableButton setEnabled:NO];
+#endif
+			[tablesListInstance updateTables:self];
+			return NO;
+		}
+		// Problem: alert sheet doesn't respond to first click
+		if (isEditingNewRow) {
+			SPBeginAlertSheet(NSLocalizedString(@"Error adding field", @"error adding field message"),
+							  NSLocalizedString(@"Edit row", @"Edit row button"),
+							  NSLocalizedString(@"Discard changes", @"discard changes button"), nil, [tableDocumentInstance parentWindow], self, @selector(addRowErrorSheetDidEnd:returnCode:contextInfo:), NULL,
+							  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to add the field '%@' via\n\n%@\n\nMySQL said: %@", @"error adding field informative message"),
+							  [theRow objectForKey:@"name"], queryString, [mySQLConnection lastErrorMessage]]);
+		}
+		else {
+			SPBeginAlertSheet(NSLocalizedString(@"Error changing field", @"error changing field message"),
+							  NSLocalizedString(@"Edit row", @"Edit row button"),
+							  NSLocalizedString(@"Discard changes", @"discard changes button"), nil, [tableDocumentInstance parentWindow], self, @selector(addRowErrorSheetDidEnd:returnCode:contextInfo:), NULL,
+							  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the field '%@' via\n\n%@\n\nMySQL said: %@", @"error changing field informative message"),
+							  [theRow objectForKey:@"name"], queryString, [mySQLConnection lastErrorMessage]]);
+		}
+
+		return NO;
+	}
+}
+
+/**
+ * Takes the column definition from a dictionary and returns the it to be used
+ * with an ALTER statement, e.g.:
+ *  `col1` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT
+ */
+- (NSString *)_buildPartialColumnDefinitionString:(NSDictionary *)theRow
+{
 	NSMutableString *queryString;
 	BOOL fieldDefIncludesLen = NO;
 	
@@ -743,27 +934,16 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	
 	BOOL specialFieldTypes = NO;
 
-	NSDictionary *theRow = [tableFields objectAtIndex:currentlyEditingRow];
-
 	if ([theRow objectForKey:@"type"])
 		theRowType = [[[theRow objectForKey:@"type"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] uppercaseString];
 
 	if ([theRow objectForKey:@"Extra"])
 		theRowExtra = [[[theRow objectForKey:@"Extra"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] uppercaseString];
 
-	if (isEditingNewRow) {
-		queryString = [NSMutableString stringWithFormat:@"ALTER TABLE %@ ADD %@ %@", 
-					   [selectedTable backtickQuotedString], 
-					   [[theRow objectForKey:@"name"] backtickQuotedString], 
-					   theRowType];
-	}
-	else {
-		queryString = [NSMutableString stringWithFormat:@"ALTER TABLE %@ CHANGE %@ %@ %@", 
-					   [selectedTable backtickQuotedString], 
-					   [[oldRow objectForKey:@"name"] backtickQuotedString], 
-					   [[theRow objectForKey:@"name"] backtickQuotedString], 
-					   theRowType];
-	}
+	queryString = [NSMutableString stringWithString:[[theRow objectForKey:@"name"] backtickQuotedString]];
+
+	[queryString appendString:@" "];
+	[queryString appendString:theRowType];
 
 	// Check for pre-defined field type SERIAL
 	if([theRowType isEqualToString:@"SERIAL"]) {
@@ -804,30 +984,28 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	if(!specialFieldTypes) {
 
 
-		if ([fieldValidation isFieldTypeString:theRowType]) {
+		if ([theRowType isEqualToString:@"JSON"]) {
+			// we "see" JSON as a string, but it is not internally to MySQL and so doesn't allow CHARACTER SET/BINARY/COLLATE either.
+		}
+		else if ([fieldValidation isFieldTypeString:theRowType]) {
+			BOOL charsetSupport = [[tableDocumentInstance serverSupport] supportsPost41CharacterSetHandling];
+
 			// Add CHARSET
-			NSString *fieldEncoding = @"";
-			if([[theRow objectForKey:@"encoding"] integerValue] > 0 && [[tableDocumentInstance serverSupport] supportsPost41CharacterSetHandling]) {
-				NSString *enc = [[encodingPopupCell itemAtIndex:[[theRow objectForKey:@"encoding"] integerValue]] title];
-				NSInteger start = [enc rangeOfString:@"("].location+1;
-				NSInteger end = [enc length] - start - 1;
-				fieldEncoding = [enc substringWithRange:NSMakeRange(start, end)];
+			NSString *fieldEncoding = [theRow objectForKey:@"encodingName"];
+			if(charsetSupport && [fieldEncoding length]) {
 				[queryString appendFormat:@"\n CHARACTER SET %@", fieldEncoding];
 			}
-			// Remember CHARSET for COLLATE
-			if(![fieldEncoding length] && [tableDataInstance tableEncoding]) {
-				fieldEncoding = [tableDataInstance tableEncoding];
-			}
 
-			// ADD COLLATE
-			if([fieldEncoding length] && [[theRow objectForKey:@"collation"] integerValue] > 0 && ![[theRow objectForKey:@"binary"] integerValue]) {
-				NSArray *theCollations = [databaseDataInstance getDatabaseCollationsForEncoding:fieldEncoding];
-				NSString *col = [[theCollations objectAtIndex:[[theRow objectForKey:@"collation"] integerValue]-1] objectForKey:@"COLLATION_NAME"];
-				[queryString appendFormat:@"\n COLLATE %@", col];
-			}
-
-			if ( [[theRow objectForKey:@"binary"] integerValue] == 1) {
+			if ([[theRow objectForKey:@"binary"] integerValue] == 1) {
 				[queryString appendString:@"\n BINARY"];
+			}
+			else {
+				// ADD COLLATE
+				// Note: a collate without charset is valid in MySQL. The charset can be determined from a collation.
+				NSString *fieldCollation = [theRow objectForKey:@"collationName"];
+				if(charsetSupport && [fieldCollation length]) {
+					[queryString appendFormat:@"\n COLLATE %@", fieldCollation];
+				}
 			}
 
 		}
@@ -851,39 +1029,49 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 
 		// Don't provide any defaults for auto-increment fields
 		if (![theRowExtra isEqualToString:@"AUTO_INCREMENT"]) {
-
+			NSArray *matches;
+			NSString *defaultValue = [theRow objectForKey:@"default"];
 			// If a NULL value has been specified, and NULL is allowed, specify DEFAULT NULL
-			if ([[theRow objectForKey:@"default"] isEqualToString:[prefs objectForKey:SPNullValue]]) 
+			if ([defaultValue isEqualToString:[prefs objectForKey:SPNullValue]])
 			{
 				if ([[theRow objectForKey:@"null"] integerValue] == 1) {
 					[queryString appendString:@"\n DEFAULT NULL"];
 				}
 			}
 			// Otherwise, if CURRENT_TIMESTAMP was specified for timestamps/datetimes, use that
-			else if (([theRowType isEqualToString:@"TIMESTAMP"] || [theRowType isEqualToString:@"DATETIME"]) &&
-					 [[[theRow objectForKey:@"default"] uppercaseString] isEqualToString:@"CURRENT_TIMESTAMP"])
+			else if ([theRowType isInArray:@[@"TIMESTAMP",@"DATETIME"]] &&
+					[(matches = [[defaultValue uppercaseString] captureComponentsMatchedByRegex:SPCurrentTimestampPattern]) count])
 			{
 				[queryString appendString:@"\n DEFAULT CURRENT_TIMESTAMP"];
-
+				NSString *userLen = [matches objectAtIndex:1];
+				// mysql 5.6.4+ allows DATETIME(n) for fractional seconds, which in turn requires CURRENT_TIMESTAMP(n) with the same n!
+				// Also, if the user explicitly added one we should never ignore that.
+				if([userLen length] || fieldDefIncludesLen) {
+					[queryString appendFormat:@"(%@)",([userLen length]? userLen : [theRow objectForKey:@"length"])];
+				}
 			}
 			// If the field is of type BIT, permit the use of single qoutes and also don't quote the default value.
 			// For example, use DEFAULT b'1' as opposed to DEFAULT 'b\'1\'' which results in an error.
-			else if ([(NSString *)[theRow objectForKey:@"default"] length] && [theRowType isEqualToString:@"BIT"]) {
-				[queryString appendFormat:@"\n DEFAULT %@", [theRow objectForKey:@"default"]];
+			else if ([defaultValue length] && [theRowType isEqualToString:@"BIT"]) {
+				[queryString appendFormat:@"\n DEFAULT %@", defaultValue];
 			}
 			// Suppress appending DEFAULT clause for any numerics, date, time fields if default is empty to avoid error messages;
-			// also don't specify a default for TEXT/BLOB or geometry fields to avoid strict mode errors
-			else if (![(NSString *)[theRow objectForKey:@"default"] length] && ([fieldValidation isFieldTypeNumeric:theRowType] || [fieldValidation isFieldTypeDate:theRowType] || [theRowType hasSuffix:@"TEXT"] || [theRowType hasSuffix:@"BLOB"] || [fieldValidation isFieldTypeGeometry:theRowType])) {
+			// also don't specify a default for TEXT/BLOB, JSON or geometry fields to avoid strict mode errors
+			else if (![defaultValue length] && ([fieldValidation isFieldTypeNumeric:theRowType] || [fieldValidation isFieldTypeDate:theRowType] || [theRowType hasSuffix:@"TEXT"] || [theRowType hasSuffix:@"BLOB"] || [theRowType isEqualToString:@"JSON"] || [fieldValidation isFieldTypeGeometry:theRowType])) {
 				;
 			}
 			// Otherwise, use the provided default
 			else {
-				[queryString appendFormat:@"\n DEFAULT %@", [mySQLConnection escapeAndQuoteString:[theRow objectForKey:@"default"]]];
+				[queryString appendFormat:@"\n DEFAULT %@", [mySQLConnection escapeAndQuoteString:defaultValue]];
 			}
 		}
 
-		if (![theRowExtra isEqualToString:@""] && ![theRowExtra isEqualToString:@"NONE"]) {
+		if ([theRowExtra length] && ![theRowExtra isEqualToString:@"NONE"]) {
 			[queryString appendFormat:@"\n %@", theRowExtra];
+			//fix our own default item if needed
+			if([theRowExtra isEqualToString:@"ON UPDATE CURRENT_TIMESTAMP"] && fieldDefIncludesLen) {
+				[queryString appendFormat:@"(%@)",[theRow objectForKey:@"length"]];
+			}
 		}
 	}
 
@@ -892,126 +1080,12 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 		[queryString appendFormat:@"\n COMMENT %@", [mySQLConnection escapeAndQuoteString:[theRow objectForKey:@"comment"]]];
 	}
 
-	if (!isEditingNewRow) {
-
-		// Unparsed details - column formats, storage, reference definitions
-		if ([(NSString *)[theRow objectForKey:@"unparsed"] length]) {
-			[queryString appendFormat:@"\n %@", [theRow objectForKey:@"unparsed"]];
-		}
+	// Unparsed details - column formats, storage, reference definitions
+	if ([(NSString *)[theRow objectForKey:@"unparsed"] length]) {
+		[queryString appendFormat:@"\n %@", [theRow objectForKey:@"unparsed"]];
 	}
 
-	// Process index if given for fields set to AUTO_INCREMENT 
-	if (autoIncrementIndex) {
-		// User wants to add PRIMARY KEY
-		if ([autoIncrementIndex isEqualToString:@"PRIMARY KEY"]) {
-			[queryString appendString:@"\n PRIMARY KEY"];
-			
-			// If the field isn't set to be unsigned and we're making it the primary key then make it unsigned
-			if (![[theRow objectForKey:@"unsigned"] boolValue]) {
-				
-				// Find the occurrence of the table name and data type so we know where to insert the 
-				// UNSIGNED keyword.
-				NSRange range = [queryString rangeOfString:[NSString stringWithFormat:@"%@ %@", [[theRow objectForKey:@"name"] backtickQuotedString], theRowType] options:NSLiteralSearch];
-				
-				NSInteger insertionIndex = (range.location + range.length);
-				
-				// If the field definition's data type includes the length then we must take this into
-				// account when inserting the UNSIGNED keyword. Add 2 to the index to accommodate the
-				// parentheses used.
-				if (fieldDefIncludesLen) {
-					insertionIndex += ([(NSString *)[theRow objectForKey:@"length"] length] + 2); 
-				}
-				
-				[queryString insertString:@" UNSIGNED" atIndex:insertionIndex];
-			}
-							
-			// Add AFTER ... only if the user added a new field
-			if (isEditingNewRow) {
-				[queryString appendFormat:@"\n AFTER %@", [[[tableFields objectAtIndex:(currentlyEditingRow -1)] objectForKey:@"name"] backtickQuotedString]];
-			}
-		}
-		else {
-			// Add AFTER ... only if the user added a new field
-			if (isEditingNewRow) {
-				[queryString appendFormat:@"\n AFTER %@", [[[tableFields objectAtIndex:(currentlyEditingRow -1)] objectForKey:@"name"] backtickQuotedString]];
-			}
-
-			[queryString appendFormat:@"\n, ADD %@ (%@)", autoIncrementIndex, [[theRow objectForKey:@"name"] backtickQuotedString]];
-		}
-	}
-
-	// Add AFTER ... only if the user added a new field
-	else if (isEditingNewRow) {
-		[queryString appendFormat:@"\n AFTER %@", [[[tableFields objectAtIndex:(currentlyEditingRow -1)] objectForKey:@"name"] backtickQuotedString]];
-	}
-
-	isCurrentExtraAutoIncrement = NO;
-	autoIncrementIndex = nil;
-
-	// Execute query
-	[mySQLConnection queryString:queryString];
-
-	if (![mySQLConnection queryErrored]) {
-		isEditingRow = NO;
-		isEditingNewRow = NO;
-		currentlyEditingRow = -1;
-
-		[tableDataInstance resetAllData];
-		[tableDocumentInstance setStatusRequiresReload:YES];
-		[self loadTable:selectedTable];
-
-		// Mark the content table for refresh
-		[tableDocumentInstance setContentRequiresReload:YES];
-
-		// Query the structure of all databases in the background
-		[NSThread detachNewThreadWithName:@"SPNavigatorController database structure querier" target:[tableDocumentInstance databaseStructureRetrieval] selector:@selector(queryDbStructureWithUserInfo:) object:[NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool:YES], @"forceUpdate", selectedTable, @"affectedItem", [NSNumber numberWithInteger:[tablesListInstance tableType]], @"affectedItemType", nil]];
-
-		return YES;
-	}
-	else {
-		alertSheetOpened = YES;
-		if([mySQLConnection lastErrorID] == 1146) { // If the current table doesn't exist anymore
-			SPBeginAlertSheet(NSLocalizedString(@"Error", @"error"),
-							  NSLocalizedString(@"OK", @"OK button"),
-							  nil, nil, [tableDocumentInstance parentWindow], self, nil, nil,
-							  [NSString stringWithFormat:NSLocalizedString(@"An error occurred while trying to alter table '%@'.\n\nMySQL said: %@", @"error while trying to alter table message"),
-							  selectedTable, [mySQLConnection lastErrorMessage]]);
-
-			isEditingRow = NO;
-			isEditingNewRow = NO;
-			currentlyEditingRow = -1;
-			[tableFields removeAllObjects];
-			[tableSourceView reloadData];
-			[indexesTableView reloadData];
-			[addFieldButton setEnabled:NO];
-			[duplicateFieldButton setEnabled:NO];
-			[removeFieldButton setEnabled:NO];
-#ifndef SP_CODA
-			[addIndexButton setEnabled:NO];
-			[removeIndexButton setEnabled:NO];
-			[editTableButton setEnabled:NO];
-#endif
-			[tablesListInstance updateTables:self];
-			return NO;
-		}
-		// Problem: alert sheet doesn't respond to first click
-		if (isEditingNewRow) {
-			SPBeginAlertSheet(NSLocalizedString(@"Error adding field", @"error adding field message"),
-							  NSLocalizedString(@"Edit row", @"Edit row button"),
-							  NSLocalizedString(@"Discard changes", @"discard changes button"), nil, [tableDocumentInstance parentWindow], self, @selector(addRowErrorSheetDidEnd:returnCode:contextInfo:), nil,
-							  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to add the field '%@' via\n\n%@\n\nMySQL said: %@", @"error adding field informative message"),
-							  [theRow objectForKey:@"name"], queryString, [mySQLConnection lastErrorMessage]]);
-		}
-		else {
-			SPBeginAlertSheet(NSLocalizedString(@"Error changing field", @"error changing field message"),
-							  NSLocalizedString(@"Edit row", @"Edit row button"),
-							  NSLocalizedString(@"Discard changes", @"discard changes button"), nil, [tableDocumentInstance parentWindow], self, @selector(addRowErrorSheetDidEnd:returnCode:contextInfo:), nil,
-							  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the field '%@' via\n\n%@\n\nMySQL said: %@", @"error changing field informative message"),
-							  [theRow objectForKey:@"name"], queryString, [mySQLConnection lastErrorMessage]]);
-		}
-
-		return NO;
-	}
+	return queryString;
 }
 
 #ifdef SP_CODA /* glue */
@@ -1059,15 +1133,13 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	// on the main thread ensures the timer fires on the main thread.
 	if (![errorDictionary objectForKey:@"delayed"]) {
 		NSMutableDictionary *delayedErrorDictionary = [NSMutableDictionary dictionaryWithDictionary:errorDictionary];
-		[delayedErrorDictionary setObject:[NSNumber numberWithBool:YES] forKey:@"delayed"];
+		[delayedErrorDictionary setObject:@YES forKey:@"delayed"];
 		[self performSelector:@selector(showErrorSheetWith:) withObject:delayedErrorDictionary afterDelay:0.3];
 		return;
 	}
 
 	// Display the error sheet
-	SPBeginAlertSheet([errorDictionary objectForKey:@"title"], NSLocalizedString(@"OK", @"OK button"),
-			nil, nil, [tableDocumentInstance parentWindow], self, nil, nil,
-			[errorDictionary objectForKey:@"message"]);
+	SPOnewayAlertSheet([errorDictionary objectForKey:@"title"], [tableDocumentInstance parentWindow], [errorDictionary objectForKey:@"message"]);
 }
 
 /**
@@ -1155,7 +1227,7 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 		
 		// Problem: reentering edit mode for first cell doesn't function
 		[tableSourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:currentlyEditingRow] byExtendingSelection:NO];
-		[tableSourceView performSelector:@selector(keyDown:) withObject:[NSEvent keyEventWithType:NSKeyDown location:NSMakePoint(0,0) modifierFlags:0 timestamp:0 windowNumber:[[tableDocumentInstance parentWindow] windowNumber] context:[NSGraphicsContext currentContext] characters:nil charactersIgnoringModifiers:nil isARepeat:NO keyCode:0x24] afterDelay:0.0];
+		[tableSourceView performSelector:@selector(keyDown:) withObject:[NSEvent keyEventWithType:NSKeyDown location:NSMakePoint(0,0) modifierFlags:0 timestamp:0 windowNumber:[[tableDocumentInstance parentWindow] windowNumber] context:[NSGraphicsContext currentContext] characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:0x24] afterDelay:0.0];
 	}
 	
 	// Discard changes and cancel editing
@@ -1208,7 +1280,7 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	[indexesController setConnection:mySQLConnection];
 	
 	// Set up tableView
-	[tableSourceView registerForDraggedTypes:[NSArray arrayWithObjects:SPDefaultPasteboardDragType, nil]];
+	[tableSourceView registerForDraggedTypes:@[SPDefaultPasteboardDragType]];
 }
 
 /**
@@ -1466,6 +1538,1092 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 }
 
 #pragma mark -
+#pragma mark Table loading
+
+/**
+ * Loads aTable, puts it in an array, updates the tableViewColumns and reloads the tableView.
+ */
+- (void)loadTable:(NSString *)aTable
+{
+	NSMutableDictionary *theTableEnumLists = [NSMutableDictionary dictionary];
+
+	// Check whether a save of the current row is required.
+	if (![[self onMainThread] saveRowOnDeselect]) return;
+
+	// If no table is selected, reset the interface and return
+	if (!aTable || ![aTable length]) {
+		[[self onMainThread] setTableDetails:nil];
+		return;
+	}
+
+	NSMutableArray *theTableFields = [[NSMutableArray alloc] init];
+
+	// Make a mutable copy out of the cached [tableDataInstance columns] since we're adding infos
+	for (id col in [tableDataInstance columns])
+	{
+		[theTableFields addObject:[[col mutableCopy] autorelease]];
+	}
+
+	// Retrieve the indexes for the table
+	SPMySQLResult *indexResult = [mySQLConnection queryString:[NSString stringWithFormat:@"SHOW INDEX FROM %@", [aTable backtickQuotedString]]];
+
+	// If an error occurred, reset the interface and abort
+	if ([mySQLConnection queryErrored]) {
+		[[NSNotificationCenter defaultCenter] postNotificationOnMainThreadWithName:@"SMySQLQueryHasBeenPerformed" object:tableDocumentInstance];
+		[[self onMainThread] setTableDetails:nil];
+
+		if ([mySQLConnection isConnected]) {
+			SPOnewayAlertSheet(
+							   NSLocalizedString(@"Error", @"error"),
+							   [NSApp mainWindow],
+							   [NSString stringWithFormat:NSLocalizedString(@"An error occurred while retrieving information.\nMySQL said: %@", @"message of panel when retrieving information failed"), [mySQLConnection lastErrorMessage]]
+							   );
+		}
+
+		return;
+	}
+
+	// Process the indexes into a local array of dictionaries
+	NSArray *theTableIndexes = [self convertIndexResultToArray:indexResult];
+
+	// Set the Key column
+	for (NSDictionary* theIndex in theTableIndexes)
+	{
+		for (id field in theTableFields)
+		{
+			if ([[field objectForKey:@"name"] isEqualToString:[theIndex objectForKey:@"Column_name"]]) {
+				if ([[theIndex objectForKey:@"Key_name"] isEqualToString:@"PRIMARY"]) {
+					[field setObject:@"PRI" forKey:@"Key"];
+				}
+				else {
+					if ([[field objectForKey:@"typegrouping"] isEqualToString:@"geometry"]) {
+						[field setObject:@"SPA" forKey:@"Key"];
+					}
+					else {
+						[field setObject:(([[theIndex objectForKey:@"Non_unique"] isEqualToString:@"1"]) ? @"MUL" : @"UNI") forKey:@"Key"];
+					}
+				}
+
+				break;
+			}
+		}
+	}
+
+	// Set up the encoding PopUpButtonCell
+	NSArray *encodings  = [databaseDataInstance getDatabaseCharacterSetEncodings];
+
+	SPMainQSync(^{
+		[encodingPopupCell removeAllItems];
+
+		if ([encodings count]) {
+
+			[encodingPopupCell addItemWithTitle:@"dummy"];
+			//copy the default attributes and add gray color
+			NSMutableDictionary *defaultAttrs = [NSMutableDictionary dictionaryWithDictionary:[[encodingPopupCell attributedTitle] attributesAtIndex:0 effectiveRange:NULL]];
+			[defaultAttrs setObject:[NSColor lightGrayColor] forKey:NSForegroundColorAttributeName];
+			[[encodingPopupCell lastItem] setTitle:@""];
+
+			for (NSDictionary *encoding in encodings)
+			{
+				NSString *encodingName = [encoding objectForKey:@"CHARACTER_SET_NAME"];
+				NSString *title = (![encoding objectForKey:@"DESCRIPTION"]) ? encodingName : [NSString stringWithFormat:@"%@ (%@)", [encoding objectForKey:@"DESCRIPTION"], encodingName];
+
+				[encodingPopupCell addItemWithTitle:title];
+				NSMenuItem *item = [encodingPopupCell lastItem];
+
+				[item setRepresentedObject:encodingName];
+
+				if ([encodingName isEqualToString:[tableDataInstance tableEncoding]]) {
+
+					NSAttributedString *itemString = [[NSAttributedString alloc] initWithString:[item title] attributes:defaultAttrs];
+
+					[item setAttributedTitle:[itemString autorelease]];
+				}
+			}
+		}
+		else {
+			[encodingPopupCell addItemWithTitle:NSLocalizedString(@"Not available", @"not available label")];
+		}
+	});
+
+	// Process all the fields to normalise keys and add additional information
+	for (id theField in theTableFields)
+	{
+		NSString *type = [[[theField objectForKey:@"type"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] uppercaseString];
+
+		if([type isEqualToString:@"JSON"]) {
+			// MySQL 5.7 manual:
+			// "MySQL handles strings used in JSON context using the utf8mb4 character set and utf8mb4_bin collation.
+			//  Strings in other character set are converted to utf8mb4 as necessary."
+			[theField setObject:@"utf8mb4" forKey:@"encodingName"];
+			[theField setObject:@"utf8mb4_bin" forKey:@"collationName"];
+			[theField setObject:@1 forKey:@"binary"];
+		}
+		else if ([fieldValidation isFieldTypeString:type]) {
+			// The MySQL 4.1 manual says:
+			//
+			// MySQL chooses the column character set and collation in the following manner:
+			//   1. If both CHARACTER SET X and COLLATE Y were specified, then character set X and collation Y are used.
+			//   2. If CHARACTER SET X was specified without COLLATE, then character set X and its default collation are used.
+			//   3. If COLLATE Y was specified without CHARACTER SET, then the character set associated with Y and collation Y.
+			//   4. Otherwise, the table character set and collation are used.
+			NSString *encoding  = [theField objectForKey:@"encoding"];
+			NSString *collation = [theField objectForKey:@"collation"];
+			if(encoding) {
+				if(collation) {
+					// 1
+				}
+				else {
+					collation = [databaseDataInstance getDefaultCollationForEncoding:encoding]; // 2
+				}
+			}
+			else {
+				if(collation) {
+					encoding = [databaseDataInstance getEncodingFromCollation:collation]; // 3
+				}
+				else {
+					encoding = [tableDataInstance tableEncoding]; //4
+					collation = [tableDataInstance statusValueForKey:@"Collation"];
+					if(!collation) {
+						// should not happen, as the TABLE STATUS output always(?) includes the collation
+						collation = [databaseDataInstance getDefaultCollationForEncoding:encoding];
+					}
+				}
+			}
+
+			// MySQL < 4.1 does not support collations (they are part of the charset), it will be nil there
+
+			[theField setObject:encoding forKey:@"encodingName"];
+			[theField setObject:collation forKey:@"collationName"];
+
+			// Set BINARY if collation ends with _bin for convenience
+			if ([collation hasSuffix:@"_bin"]) {
+				[theField setObject:@1 forKey:@"binary"];
+			}
+		}
+
+		// Get possible values if the field is an enum or a set
+		if (([type isEqualToString:@"ENUM"] || [type isEqualToString:@"SET"]) && [theField objectForKey:@"values"]) {
+			[theTableEnumLists setObject:[NSArray arrayWithArray:[theField objectForKey:@"values"]] forKey:[theField objectForKey:@"name"]];
+			[theField setObject:[NSString stringWithFormat:@"'%@'", [[theField objectForKey:@"values"] componentsJoinedByString:@"','"]] forKey:@"length"];
+		}
+
+		// Join length and decimals if any
+		if ([theField objectForKey:@"decimals"])
+			[theField setObject:[NSString stringWithFormat:@"%@,%@", [theField objectForKey:@"length"], [theField objectForKey:@"decimals"]] forKey:@"length"];
+
+		// Normalize default
+		if (![theField objectForKey:@"default"]) {
+			[theField setObject:@"" forKey:@"default"];
+		}
+		else if ([[theField objectForKey:@"default"] isNSNull]) {
+			[theField setObject:[prefs stringForKey:SPNullValue] forKey:@"default"];
+		}
+
+		// Init Extra field
+		[theField setObject:@"None" forKey:@"Extra"];
+
+		// Check for auto_increment and set Extra accordingly
+		if ([[theField objectForKey:@"autoincrement"] integerValue]) {
+			[theField setObject:@"auto_increment" forKey:@"Extra"];
+		}
+
+		// For timestamps/datetime check to see whether "on update CURRENT_TIMESTAMP"  and set Extra accordingly
+		else if ([type isInArray:@[@"TIMESTAMP",@"DATETIME"]] && [[theField objectForKey:@"onupdatetimestamp"] boolValue]) {
+			NSString *ouct = @"on update CURRENT_TIMESTAMP";
+			// restore a length parameter if the field has fractional seconds.
+			// the parameter of current_timestamp MUST match the field's length in that case, so we can just 'guess' it.
+			NSString *fieldLen = [theField objectForKey:@"length"];
+			if([fieldLen length] && ![fieldLen isEqualToString:@"0"]) {
+				ouct = [ouct stringByAppendingFormat:@"(%@)",fieldLen];
+			}
+			[theField setObject:ouct forKey:@"Extra"];
+		}
+	}
+
+	// Set up the table details for the new table, and request an data/interface update
+	NSDictionary *tableDetails = [NSDictionary dictionaryWithObjectsAndKeys:
+								  aTable, @"name",
+								  theTableFields, @"tableFields",
+								  theTableIndexes, @"tableIndexes",
+								  theTableEnumLists, @"enumLists",
+								  nil];
+
+	[[self onMainThread] setTableDetails:tableDetails];
+
+	isCurrentExtraAutoIncrement = [tableDataInstance tableHasAutoIncrementField];
+	autoIncrementIndex = nil;
+
+	// Send the query finished/work complete notification
+	[[NSNotificationCenter defaultCenter] postNotificationOnMainThreadWithName:@"SMySQLQueryHasBeenPerformed" object:tableDocumentInstance];
+
+	[theTableFields release];
+}
+
+/**
+ * Reloads the table (performing a new query).
+ */
+- (IBAction)reloadTable:(id)sender
+{
+	// Check whether a save of the current row is required
+	if (![[self onMainThread] saveRowOnDeselect]) return;
+
+	[tableDataInstance resetAllData];
+	[tableDocumentInstance setStatusRequiresReload:YES];
+
+	// Query the structure of all databases in the background (mainly for completion)
+	[[tableDocumentInstance databaseStructureRetrieval] queryDbStructureInBackgroundWithUserInfo:@{@"forceUpdate" : @YES}];
+
+	[self loadTable:selectedTable];
+}
+
+/**
+ * Updates the stored table details and updates the interface to match.
+ *
+ * Should be called on the main thread.
+ */
+- (void)setTableDetails:(NSDictionary *)tableDetails
+{
+	NSString *newTableName = [tableDetails objectForKey:@"name"];
+	NSMutableDictionary *newDefaultValues;
+
+	BOOL enableInteraction =
+#ifndef SP_CODA /* patch */
+	![[tableDocumentInstance selectedToolbarItemIdentifier] isEqualToString:SPMainToolbarTableStructure] ||
+#endif
+	![tableDocumentInstance isWorking];
+
+	// Update the selected table name
+	if (selectedTable) SPClear(selectedTable);
+	if (newTableName) selectedTable = [[NSString alloc] initWithString:newTableName];
+
+	[indexesController setTable:selectedTable];
+
+	// Reset the table store and display
+	[tableSourceView deselectAll:self];
+	[tableFields removeAllObjects];
+	[enumFields removeAllObjects];
+	[indexesTableView deselectAll:self];
+	[addFieldButton setEnabled:NO];
+	[duplicateFieldButton setEnabled:NO];
+	[removeFieldButton setEnabled:NO];
+#ifndef SP_CODA
+	[addIndexButton setEnabled:NO];
+	[removeIndexButton setEnabled:NO];
+	[editTableButton setEnabled:NO];
+#endif
+
+	// If no table is selected, refresh the table/index display to blank and return
+	if (!selectedTable) {
+		[tableSourceView reloadData];
+		// Empty indexesController's fields and indices explicitly before reloading
+		[indexesController setFields:@[]];
+		[indexesController setIndexes:@[]];
+		[indexesTableView reloadData];
+
+		return;
+	}
+
+	// Update the fields and indexes stores
+	[tableFields setArray:[tableDetails objectForKey:@"tableFields"]];
+
+	[indexesController setFields:tableFields];
+	[indexesController setIndexes:[tableDetails objectForKey:@"tableIndexes"]];
+
+	if (defaultValues) SPClear(defaultValues);
+
+	newDefaultValues = [NSMutableDictionary dictionaryWithCapacity:[tableFields count]];
+
+	for (id theField in tableFields)
+	{
+		[newDefaultValues setObject:[theField objectForKey:@"default"] forKey:[theField objectForKey:@"name"]];
+	}
+
+	defaultValues = [[NSDictionary dictionaryWithDictionary:newDefaultValues] retain];
+
+#ifndef SP_CODA
+	// Enable the edit table button
+	[editTableButton setEnabled:enableInteraction];
+#endif
+
+	// If a view is selected, disable the buttons; otherwise enable.
+	BOOL editingEnabled = ([tablesListInstance tableType] == SPTableTypeTable) && enableInteraction;
+
+	[addFieldButton setEnabled:editingEnabled];
+#ifndef SP_CODA
+	[addIndexButton setEnabled:editingEnabled && ![[[tableDataInstance statusValueForKey:@"Engine"] uppercaseString] isEqualToString:@"CSV"]];
+#endif
+
+	// Reload the views
+	[indexesTableView reloadData];
+	[tableSourceView reloadData];
+}
+
+#pragma mark - SPTableStructureDelegate
+
+#pragma mark Table view datasource methods
+
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView
+{
+	return [tableFields count];
+}
+
+- (id)tableView:(NSTableView *)tableView objectValueForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
+{
+	// Return a placeholder if the table is reloading
+	if ((NSUInteger)rowIndex >= [tableFields count]) return @"...";
+
+	NSDictionary *rowData = NSArrayObjectAtIndex(tableFields, rowIndex);
+
+	if ([[tableColumn identifier] isEqualToString:@"collation"]) {
+		NSString *tableEncoding = [tableDataInstance tableEncoding];
+		NSString *columnEncoding = [rowData objectForKey:@"encodingName"];
+		NSString *columnCollation = [rowData objectForKey:@"collationName"]; // loadTable: has already inferred it, if not set explicit
+
+#warning Building the collation menu here is a big performance hog. This should be done in menuNeedsUpdate: below!
+		NSPopUpButtonCell *collationCell = [tableColumn dataCell];
+		[collationCell removeAllItems];
+		[collationCell addItemWithTitle:@"dummy"];
+		//copy the default style of menu items and add gray color for default item
+		NSMutableDictionary *menuAttrs = [NSMutableDictionary dictionaryWithDictionary:[[collationCell attributedTitle] attributesAtIndex:0 effectiveRange:NULL]];
+		[menuAttrs setObject:[NSColor lightGrayColor] forKey:NSForegroundColorAttributeName];
+		[[collationCell lastItem] setTitle:@""];
+
+		//if this is not set the column either has no encoding (numeric etc.) or retrieval failed. Either way we can't provide collations
+		if([columnEncoding length]) {
+			collations = [databaseDataInstance getDatabaseCollationsForEncoding:columnEncoding];
+
+			if ([collations count] > 0) {
+				NSString *tableCollation = [[tableDataInstance statusValues] objectForKey:@"Collation"];
+
+				if (![tableCollation length]) {
+					tableCollation = [databaseDataInstance getDefaultCollationForEncoding:tableEncoding];
+				}
+
+				BOOL columnUsesTableDefaultEncoding = ([columnEncoding isEqualToString:tableEncoding]);
+				// Populate collation popup button
+				for (NSDictionary *collation in collations)
+				{
+					NSString *collationName = [collation objectForKey:@"COLLATION_NAME"];
+
+					[collationCell addItemWithTitle:collationName];
+					NSMenuItem *item = [collationCell lastItem];
+					[item setRepresentedObject:collationName];
+
+					// If this matches the table's collation, draw in gray
+					if (columnUsesTableDefaultEncoding && [collationName isEqualToString:tableCollation]) {
+						NSAttributedString *itemString = [[NSAttributedString alloc] initWithString:[item title] attributes:menuAttrs];
+						[item setAttributedTitle:[itemString autorelease]];
+					}
+				}
+
+				// the popup cell is subclassed to take the representedObject instead of the item index
+				return columnCollation;
+			}
+		}
+
+		return nil;
+	}
+	else if ([[tableColumn identifier] isEqualToString:@"encoding"]) {
+		// the encoding menu was already configured during setTableDetails:
+		NSString *columnEncoding = [rowData objectForKey:@"encodingName"];
+
+		if([columnEncoding length]) {
+			NSInteger idx = [encodingPopupCell indexOfItemWithRepresentedObject:columnEncoding];
+			if(idx > 0) return @(idx);
+		}
+
+		return @0;
+	}
+	else if ([[tableColumn identifier] isEqualToString:@"Extra"]) {
+		id dataCell = [tableColumn dataCell];
+
+		[dataCell removeAllItems];
+
+		// Populate Extra suggestion popup button
+		for (id item in extraFieldSuggestions)
+		{
+			if (!(isCurrentExtraAutoIncrement && [item isEqualToString:@"auto_increment"])) {
+				[dataCell addItemWithObjectValue:item];
+			}
+		}
+	}
+
+	return [rowData objectForKey:[tableColumn identifier]];
+}
+
+- (void)tableView:(NSTableView *)aTableView setObjectValue:(id)anObject forTableColumn:(NSTableColumn *)aTableColumn row:(NSInteger)rowIndex
+{
+	// Make sure that the operation is for the right table view
+	if (aTableView != tableSourceView) return;
+
+	NSMutableDictionary *currentRow = NSArrayObjectAtIndex(tableFields,rowIndex);
+
+	if (!isEditingRow) {
+		[oldRow setDictionary:currentRow];
+		isEditingRow = YES;
+		currentlyEditingRow = rowIndex;
+	}
+
+	// Reset collation if encoding was changed
+	if ([[aTableColumn identifier] isEqualToString:@"encoding"]) {
+		NSString *oldEncoding = [currentRow objectForKey:@"encodingName"];
+		NSString *newEncoding = [[encodingPopupCell itemAtIndex:[anObject integerValue]] representedObject];
+		if (![oldEncoding isEqualToString:newEncoding]) {
+			[currentRow removeObjectForKey:@"collationName"];
+			[tableSourceView reloadData];
+		}
+		if(!newEncoding)
+			[currentRow removeObjectForKey:@"encodingName"];
+		else
+			[currentRow setObject:newEncoding forKey:@"encodingName"];
+		return;
+	}
+	else if ([[aTableColumn identifier] isEqualToString:@"collation"]) {
+		//the popup button is subclassed to return the representedObject instead of the item index
+		NSString *newCollation = anObject;
+
+		if(!newCollation)
+			[currentRow removeObjectForKey:@"collationName"];
+		else
+			[currentRow setObject:newCollation forKey:@"collationName"];
+		return;
+	}
+	// Reset collation if BINARY was changed, as enabling BINARY sets collation to *_bin
+	else if ([[aTableColumn identifier] isEqualToString:@"binary"]) {
+		if ([[currentRow objectForKey:@"binary"] integerValue] != [anObject integerValue]) {
+			[currentRow removeObjectForKey:@"collationName"];
+
+			[tableSourceView reloadData];
+		}
+	}
+	// Set null field to "do not allow NULL" for auto_increment Extra and reset Extra suggestion list
+	else if ([[aTableColumn identifier] isEqualToString:@"Extra"]) {
+		if (![[currentRow objectForKey:@"Extra"] isEqualToString:anObject]) {
+
+			isCurrentExtraAutoIncrement = [[[anObject stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] uppercaseString] isEqualToString:@"AUTO_INCREMENT"];
+
+			if (isCurrentExtraAutoIncrement) {
+				[currentRow setObject:@0 forKey:@"null"];
+
+				// Asks the user to add an index to query if AUTO_INCREMENT is set and field isn't indexed
+				if ((![currentRow objectForKey:@"Key"] || [[currentRow objectForKey:@"Key"] isEqualToString:@""])) {
+#ifndef SP_CODA
+					[chooseKeyButton selectItemWithTag:SPPrimaryKeyMenuTag];
+
+					[NSApp beginSheet:keySheet
+					   modalForWindow:[tableDocumentInstance parentWindow] modalDelegate:self
+					   didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:)
+						  contextInfo:@"autoincrementindex" ];
+#endif
+				}
+			}
+			else {
+				autoIncrementIndex = nil;
+			}
+
+			id dataCell = [aTableColumn dataCell];
+
+			[dataCell removeAllItems];
+			[dataCell addItemsWithObjectValues:extraFieldSuggestions];
+			[dataCell noteNumberOfItemsChanged];
+			[dataCell reloadData];
+
+			[tableSourceView reloadData];
+
+		}
+	}
+	// Reset default to "" if field doesn't allow NULL and current default is set to NULL
+	else if ([[aTableColumn identifier] isEqualToString:@"null"]) {
+		if ([[currentRow objectForKey:@"null"] integerValue] != [anObject integerValue]) {
+			if ([anObject integerValue] == 0) {
+				if ([[currentRow objectForKey:@"default"] isEqualToString:[prefs objectForKey:SPNullValue]]) {
+					[currentRow setObject:@"" forKey:@"default"];
+				}
+			}
+
+			[tableSourceView reloadData];
+		}
+	}
+	// Store new value but not if user choose "---" for type and reset values if required
+	else if ([[aTableColumn identifier] isEqualToString:@"type"]) {
+		if (anObject && [(NSString*)anObject length] && ![(NSString*)anObject hasPrefix:@"--"]) {
+			[currentRow setObject:[(NSString*)anObject uppercaseString] forKey:@"type"];
+
+			// If type is BLOB or TEXT reset DEFAULT since these field types don't allow a default
+			if ([[currentRow objectForKey:@"type"] hasSuffix:@"TEXT"] ||
+				[[currentRow objectForKey:@"type"] hasSuffix:@"BLOB"] ||
+				[[currentRow objectForKey:@"type"] isEqualToString:@"JSON"] ||
+				[fieldValidation isFieldTypeGeometry:[currentRow objectForKey:@"type"]] ||
+				([fieldValidation isFieldTypeDate:[currentRow objectForKey:@"type"]] && ![[currentRow objectForKey:@"type"] isEqualToString:@"YEAR"]))
+			{
+				[currentRow setObject:@"" forKey:@"default"];
+				[currentRow setObject:@"" forKey:@"length"];
+			}
+
+			[tableSourceView reloadData];
+		}
+		return;
+	}
+
+	[currentRow setObject:(anObject) ? anObject : @"" forKey:[aTableColumn identifier]];
+}
+
+/**
+ * Confirm whether to allow editing of a row. Returns YES by default, but NO for views.
+ */
+- (BOOL)tableView:(NSTableView *)aTableView shouldEditTableColumn:(NSTableColumn *)aTableColumn row:(NSInteger)rowIndex
+{
+	if ([tableDocumentInstance isWorking]) return NO;
+
+	// Return NO for views
+	if ([tablesListInstance tableType] == SPTableTypeView) return NO;
+
+	return YES;
+}
+
+/**
+ * Begin a drag and drop operation from the table - copy a single dragged row to the drag pasteboard.
+ */
+- (BOOL)tableView:(NSTableView *)aTableView writeRowsWithIndexes:(NSIndexSet *)rows toPasteboard:(NSPasteboard*)pboard
+{
+	// Make sure that the drag operation is started from the right table view
+	if (aTableView != tableSourceView) return NO;
+
+	// Check whether a save of the current field row is required.
+	if (![self saveRowOnDeselect]) return NO;
+
+	if ([rows count] == 1) {
+		[pboard declareTypes:@[SPDefaultPasteboardDragType] owner:nil];
+		[pboard setString:[NSString stringWithFormat:@"%lu",[rows firstIndex]] forType:SPDefaultPasteboardDragType];
+
+		return YES;
+	}
+
+	return NO;
+}
+
+/**
+ * Determine whether to allow a drag and drop operation on this table - for the purposes of drag reordering,
+ * validate that the original source is of the correct type and within the same table, and that the drag
+ * would result in a position change.
+ */
+- (NSDragOperation)tableView:(NSTableView*)tableView validateDrop:(id <NSDraggingInfo>)info proposedRow:(NSInteger)row proposedDropOperation:(NSTableViewDropOperation)operation
+{
+	// Make sure that the drag operation is for the right table view
+	if (tableView!=tableSourceView) return NSDragOperationNone;
+
+	NSArray *pboardTypes = [[info draggingPasteboard] types];
+	NSInteger originalRow;
+
+	// Ensure the drop is of the correct type
+	if (operation == NSTableViewDropAbove && row != -1 && [pboardTypes containsObject:SPDefaultPasteboardDragType]) {
+
+		// Ensure the drag originated within this table
+		if ([info draggingSource] == tableView) {
+			originalRow = [[[info draggingPasteboard] stringForType:SPDefaultPasteboardDragType] integerValue];
+
+			if (row != originalRow && row != (originalRow+1)) {
+				return NSDragOperationMove;
+			}
+		}
+	}
+
+	return NSDragOperationNone;
+}
+
+/**
+ * Having validated a drop, perform the field/column reordering to match.
+ */
+- (BOOL)tableView:(NSTableView*)tableView acceptDrop:(id <NSDraggingInfo>)info row:(NSInteger)destinationRowIndex dropOperation:(NSTableViewDropOperation)operation
+{
+	// Make sure that the drag operation is for the right table view
+	if (tableView != tableSourceView) return NO;
+
+	// Extract the original row position from the pasteboard and retrieve the details
+	NSInteger originalRowIndex = [[[info draggingPasteboard] stringForType:SPDefaultPasteboardDragType] integerValue];
+	NSDictionary *originalRow = [[NSDictionary alloc] initWithDictionary:[tableFields objectAtIndex:originalRowIndex]];
+
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"SMySQLQueryWillBePerformed" object:tableDocumentInstance];
+
+	// Begin construction of the reordering query
+	NSMutableString *queryString = [NSMutableString stringWithFormat:@"ALTER TABLE %@ MODIFY COLUMN %@",
+									[selectedTable backtickQuotedString],
+									[self _buildPartialColumnDefinitionString:originalRow]];
+
+	[queryString appendString:@" "];
+	// Add the new location
+	if (destinationRowIndex == 0) {
+		[queryString appendString:@"FIRST"];
+	}
+	else {
+		[queryString appendFormat:@"AFTER %@", [[[tableFields objectAtIndex:destinationRowIndex - 1] objectForKey:@"name"] backtickQuotedString]];
+	}
+
+	// Run the query; report any errors, or reload the table on success
+	[mySQLConnection queryString:queryString];
+
+	if ([mySQLConnection queryErrored]) {
+		SPOnewayAlertSheet(
+						   NSLocalizedString(@"Error moving field", @"error moving field message"),
+						   [tableDocumentInstance parentWindow],
+						   [NSString stringWithFormat:NSLocalizedString(@"An error occurred while trying to move the field.\n\nMySQL said: %@", @"error moving field informative message"), [mySQLConnection lastErrorMessage]]
+						   );
+	}
+	else {
+		[tableDataInstance resetAllData];
+		[tableDocumentInstance setStatusRequiresReload:YES];
+
+		[self loadTable:selectedTable];
+
+		// Mark the content table cache for refresh
+		[tableDocumentInstance setContentRequiresReload:YES];
+
+		[tableSourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:destinationRowIndex - ((originalRowIndex < destinationRowIndex) ? 1 : 0)] byExtendingSelection:NO];
+	}
+
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"SMySQLQueryHasBeenPerformed" object:tableDocumentInstance];
+
+	[originalRow release];
+
+	return YES;
+}
+
+#pragma mark -
+#pragma mark Table view delegate methods
+
+- (BOOL)tableView:(NSTableView *)aTableView shouldSelectRow:(NSInteger)rowIndex
+{
+	// If we are editing a row, attempt to save that row - if saving failed, do not select the new row.
+	if (isEditingRow && ![self addRowToDB]) return NO;
+
+	return YES;
+}
+
+/**
+ * Performs various interface validation
+ */
+- (void)tableViewSelectionDidChange:(NSNotification *)aNotification
+{
+	// Check for which table view the selection changed
+	if ([aNotification object] == tableSourceView) {
+
+		// If we are editing a row, attempt to save that row - if saving failed, reselect the edit row.
+		if (isEditingRow && [tableSourceView selectedRow] != currentlyEditingRow && ![self saveRowOnDeselect]) return;
+
+		[duplicateFieldButton setEnabled:YES];
+
+		// Check if there is currently a field selected and change button state accordingly
+		if ([tableSourceView numberOfSelectedRows] > 0 && [tablesListInstance tableType] == SPTableTypeTable) {
+			[removeFieldButton setEnabled:YES];
+		}
+		else {
+			[removeFieldButton setEnabled:NO];
+			[duplicateFieldButton setEnabled:NO];
+		}
+
+		// If the table only has one field, disable the remove button. This removes the need to check that the user
+		// is attempting to remove the last field in a table in removeField: above, but leave it in just in case.
+		if ([tableSourceView numberOfRows] == 1) {
+			[removeFieldButton setEnabled:NO];
+		}
+	}
+}
+
+/**
+ * Traps enter and esc and make/cancel editing without entering next row
+ */
+- (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)command
+{
+	NSInteger row, column;
+
+	row = [tableSourceView editedRow];
+	column = [tableSourceView editedColumn];
+
+	// Trap the tab key, selecting the next item in the line
+	if ([textView methodForSelector:command] == [textView methodForSelector:@selector(insertTab:)] && [tableSourceView numberOfColumns] - 1 == column)
+	{
+		//save current line
+		[[control window] makeFirstResponder:control];
+
+		if ([self addRowToDB] && [textView methodForSelector:command] == [textView methodForSelector:@selector(insertTab:)]) {
+			if (row < ([tableSourceView numberOfRows] - 1)) {
+				[tableSourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row + 1] byExtendingSelection:NO];
+				[tableSourceView editColumn:0 row:row + 1 withEvent:nil select:YES];
+			}
+			else {
+				[tableSourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+				[tableSourceView editColumn:0 row:0 withEvent:nil select:YES];
+			}
+		}
+
+		return YES;
+	}
+	// Trap shift-tab key
+	else if ([textView methodForSelector:command] == [textView methodForSelector:@selector(insertBacktab:)] && column < 1)
+	{
+		if ([self addRowToDB] && [textView methodForSelector:command] == [textView methodForSelector:@selector(insertBacktab:)]) {
+			[[control window] makeFirstResponder:control];
+
+			if (row > 0) {
+				[tableSourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row - 1] byExtendingSelection:NO];
+				[tableSourceView editColumn:([tableSourceView numberOfColumns] - 1) row:row - 1 withEvent:nil select:YES];
+			}
+			else {
+				[tableSourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:([tableFields count] - 1)] byExtendingSelection:NO];
+				[tableSourceView editColumn:([tableSourceView numberOfColumns] - 1) row:([tableSourceView numberOfRows] - 1) withEvent:nil select:YES];
+			}
+		}
+
+		return YES;
+	}
+	// Trap the enter key, triggering a save
+	else if ([textView methodForSelector:command] == [textView methodForSelector:@selector(insertNewline:)])
+	{
+		// Suppress enter for non-text fields to allow selecting of chosen items from comboboxes or popups
+		if (![[[[[[tableSourceView tableColumns] objectAtIndex:column] dataCell] class] description] isEqualToString:@"NSTextFieldCell"]) {
+			return YES;
+		}
+
+		[[control window] makeFirstResponder:control];
+
+		[self addRowToDB];
+
+		[tableSourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+
+		[[tableDocumentInstance parentWindow] makeFirstResponder:tableSourceView];
+
+		return YES;
+	}
+	// Trap escape, aborting the edit and reverting the row
+	else if ([[control window] methodForSelector:command] == [[control window] methodForSelector:@selector(cancelOperation:)])
+	{
+		[control abortEditing];
+
+		[self cancelRowEditing];
+
+		return YES;
+	}
+
+	return NO;
+}
+
+/**
+ * Modify cell display by disabling table cells when a view is selected, meaning structure/index
+ * is uneditable and do cell validation due to row's field type.
+ */
+- (void)tableView:(NSTableView *)tableView willDisplayCell:(id)aCell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
+{
+	// Make sure that the message is from the right table view
+	if (tableView != tableSourceView) return;
+
+	if ([tablesListInstance tableType] == SPTableTypeView) {
+		[aCell setEnabled:NO];
+	}
+	else {
+		// Validate cell against current field type
+		NSString *rowType;
+		NSDictionary *row = NSArrayObjectAtIndex(tableFields, rowIndex);
+
+		if ((rowType = [row objectForKey:@"type"])) {
+			rowType = [[rowType stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] uppercaseString];
+		}
+
+		// Only string fields allow encoding settings, but JSON only uses utf8mb4
+		if (([[tableColumn identifier] isEqualToString:@"encoding"])) {
+			[aCell setEnabled:(![rowType isEqualToString:@"JSON"] && [fieldValidation isFieldTypeString:rowType] && [[tableDocumentInstance serverSupport] supportsPost41CharacterSetHandling])];
+		}
+
+		// Only string fields allow collation settings and string field is not set to BINARY since BINARY sets the collation to *_bin
+		else if ([[tableColumn identifier] isEqualToString:@"collation"]) {
+			// JSON always uses utf8mb4_bin which is already covered by this logic
+			[aCell setEnabled:([fieldValidation isFieldTypeString:rowType] && [[row objectForKey:@"binary"] integerValue] == 0 && [[tableDocumentInstance serverSupport] supportsPost41CharacterSetHandling])];
+		}
+
+		// Check if UNSIGNED and ZEROFILL is allowed
+		else if ([[tableColumn identifier] isEqualToString:@"zerofill"] || [[tableColumn identifier] isEqualToString:@"unsigned"]) {
+			[aCell setEnabled:([fieldValidation isFieldTypeNumeric:rowType] && ![rowType isEqualToString:@"BIT"])];
+		}
+
+		// Check if BINARY is allowed
+		else if ([[tableColumn identifier] isEqualToString:@"binary"]) {
+			// JSON always uses utf8mb4_bin
+			[aCell setEnabled:(![rowType isEqualToString:@"JSON"] && [fieldValidation isFieldTypeAllowBinary:rowType])];
+		}
+
+		// TEXT, BLOB, GEOMETRY and JSON fields don't allow a DEFAULT
+		else if ([[tableColumn identifier] isEqualToString:@"default"]) {
+			[aCell setEnabled:([rowType hasSuffix:@"TEXT"] || [rowType hasSuffix:@"BLOB"] || [rowType isEqualToString:@"JSON"] || [fieldValidation isFieldTypeGeometry:rowType]) ? NO : YES];
+		}
+
+		// Check allow NULL
+		else if ([[tableColumn identifier] isEqualToString:@"null"]) {
+			[aCell setEnabled:([[row objectForKey:@"Key"] isEqualToString:@"PRI"] ||
+							   [[[row objectForKey:@"Extra"] uppercaseString] isEqualToString:@"AUTO_INCREMENT"] ||
+							   [[[tableDataInstance statusValueForKey:@"Engine"] uppercaseString] isEqualToString:@"CSV"]) ? NO : YES];
+		}
+
+		// TEXT, BLOB, date, GEOMETRY and JSON fields don't allow a length
+		else if ([[tableColumn identifier] isEqualToString:@"length"]) {
+			[aCell setEnabled:([rowType hasSuffix:@"TEXT"] ||
+							   [rowType hasSuffix:@"BLOB"] ||
+							   [rowType isEqualToString:@"JSON"] ||
+							   ([fieldValidation isFieldTypeDate:rowType] && ![[tableDocumentInstance serverSupport] supportsFractionalSeconds] && ![rowType isEqualToString:@"YEAR"]) ||
+							   [fieldValidation isFieldTypeGeometry:rowType]) ? NO : YES];
+		}
+		else {
+			[aCell setEnabled:YES];
+		}
+	}
+}
+
+#pragma mark -
+#pragma mark Split view delegate methods
+#ifndef SP_CODA /* Split view delegate methods */
+
+- (BOOL)splitView:(NSSplitView *)sender canCollapseSubview:(NSView *)subview
+{
+	return YES;
+}
+
+- (CGFloat)splitView:(NSSplitView *)sender constrainMaxCoordinate:(CGFloat)proposedMax ofSubviewAt:(NSInteger)offset
+{
+	return proposedMax - 130;
+}
+
+- (CGFloat)splitView:(NSSplitView *)sender constrainMinCoordinate:(CGFloat)proposedMin ofSubviewAt:(NSInteger)offset
+{
+	return proposedMin + 130;
+}
+
+- (NSRect)splitView:(NSSplitView *)splitView additionalEffectiveRectOfDividerAtIndex:(NSInteger)dividerIndex
+{
+	return [structureGrabber convertRect:[structureGrabber bounds] toView:splitView];
+}
+
+- (void)splitViewDidResizeSubviews:(NSNotification *)aNotification
+{
+	if ([aNotification object] == tablesIndexesSplitView) {
+
+		NSView *indexesView = [[tablesIndexesSplitView subviews] objectAtIndex:1];
+
+		if ([tablesIndexesSplitView isSubviewCollapsed:indexesView]) {
+			[indexesShowButton setHidden:NO];
+		}
+		else {
+			[indexesShowButton setHidden:YES];
+		}
+	}
+}
+#endif
+
+#pragma mark -
+#pragma mark Combo box delegate methods
+
+- (id)comboBoxCell:(NSComboBoxCell *)aComboBoxCell objectValueForItemAtIndex:(NSInteger)index
+{
+	return NSArrayObjectAtIndex(typeSuggestions, index);
+}
+
+- (NSInteger)numberOfItemsInComboBoxCell:(NSComboBoxCell *)aComboBoxCell
+{
+	return [typeSuggestions count];
+}
+
+/**
+ * Allow completion of field data types of lowercased input.
+ */
+- (NSString *)comboBoxCell:(NSComboBoxCell *)aComboBoxCell completedString:(NSString *)uncompletedString
+{
+	if ([uncompletedString hasPrefix:@"-"]) return @"";
+
+	NSPredicate *predicate = [NSPredicate predicateWithFormat:@"SELF BEGINSWITH[c] %@", [uncompletedString uppercaseString]];
+	NSArray *result = [typeSuggestions filteredArrayUsingPredicate:predicate];
+
+	if ([result count]) return [result objectAtIndex:0];
+
+	return @"";
+}
+
+- (void)comboBoxCell:(SPComboBoxCell *)cell willPopUpWindow:(NSWindow *)win
+{
+	// the selected item in the popup list is independent of the displayed text, we have to explicitly set it, too
+	NSInteger pos = [typeSuggestions indexOfObject:[cell stringValue]];
+	if(pos != NSNotFound) {
+		[cell selectItemAtIndex:pos];
+		[cell scrollItemAtIndexToTop:pos];
+	}
+
+	//set up the help window to the right position
+	NSRect listFrame = [win frame];
+	NSRect helpFrame = [structureHelpPanel frame];
+	helpFrame.origin.y = listFrame.origin.y;
+	helpFrame.size.height = listFrame.size.height;
+	[structureHelpPanel setFrame:helpFrame display:YES];
+
+	[self _displayFieldTypeHelpIfPossible:cell];
+}
+
+- (void)comboBoxCell:(SPComboBoxCell *)cell willDismissWindow:(NSWindow *)win
+{
+	//hide the window if it is still visible
+	[structureHelpPanel orderOut:nil];
+}
+
+- (void)comboBoxCellSelectionDidChange:(SPComboBoxCell *)cell
+{
+	[self _displayFieldTypeHelpIfPossible:cell];
+}
+
+- (void)_displayFieldTypeHelpIfPossible:(SPComboBoxCell *)cell
+{
+	NSString *selected = [typeSuggestions objectOrNilAtIndex:[cell indexOfSelectedItem]];
+
+	const SPFieldTypeHelp *help = [[self class] helpForFieldType:selected];
+
+	if(help) {
+		NSMutableAttributedString *as = [[NSMutableAttributedString alloc] init];
+
+		//title
+		{
+			NSDictionary *titleAttr = @{NSFontAttributeName: [NSFont boldSystemFontOfSize:[NSFont systemFontSize]]};
+			NSAttributedString *title = [[NSAttributedString alloc] initWithString:[help typeDefinition] attributes:titleAttr];
+			[as appendAttributedString:[title autorelease]];
+			[[as mutableString] appendString:@"\n"];
+		}
+
+		//range
+		if([[help typeRange] length]) {
+			NSDictionary *rangeAttr = @{NSFontAttributeName: [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]};
+			NSAttributedString *range = [[NSAttributedString alloc] initWithString:[help typeRange] attributes:rangeAttr];
+			[as appendAttributedString:[range autorelease]];
+			[[as mutableString] appendString:@"\n"];
+		}
+
+		[[as mutableString] appendString:@"\n"];
+
+		//description
+		{
+			NSDictionary *descAttr = @{NSFontAttributeName: [NSFont systemFontOfSize:[NSFont systemFontSize]]};
+			NSAttributedString *desc = [[NSAttributedString alloc] initWithString:[help typeDescription] attributes:descAttr];
+			[as appendAttributedString:[desc autorelease]];
+		}
+
+		[as addAttribute:NSParagraphStyleAttributeName value:[NSParagraphStyle defaultParagraphStyle] range:NSMakeRange(0, [as length])];
+
+		[[structureHelpText textStorage] setAttributedString:[as autorelease]];
+
+		NSRect rect = [as boundingRectWithSize:NSMakeSize([structureHelpText frame].size.width-2, CGFLOAT_MAX) options:NSStringDrawingUsesFontLeading|NSStringDrawingUsesLineFragmentOrigin];
+
+		NSRect winRect = [structureHelpPanel frame];
+
+		CGFloat winAddonSize = (winRect.size.height - [[structureHelpPanel contentView] frame].size.height) + (6*2);
+
+		NSRect popUpFrame = [[cell spPopUpWindow] frame];
+
+		//determine the side on which to add our window based on the space left on screen
+		NSPoint topRightCorner = NSMakePoint(popUpFrame.origin.x, NSMaxY(popUpFrame));
+		NSRect screenRect = [NSScreen rectOfScreenAtPoint:topRightCorner];
+
+		if(NSMaxX(popUpFrame)+10+winRect.size.width > NSMaxX(screenRect)-10) {
+			// exceeds right border, display on the left
+			winRect.origin.x = popUpFrame.origin.x - 10 - winRect.size.width;
+		}
+		else {
+			// display on the right
+			winRect.origin.x = NSMaxX(popUpFrame)+10;
+		}
+
+		winRect.size.height = rect.size.height + winAddonSize;
+		winRect.origin.y = NSMaxY(popUpFrame) - winRect.size.height;
+		[structureHelpPanel setFrame:winRect display:YES];
+
+		[structureHelpPanel orderFront:nil];
+	}
+	else {
+		[structureHelpPanel orderOut:nil];
+	}
+}
+
+#pragma mark -
+#pragma mark Menu delegate methods (encoding/collation dropdown menu)
+
+- (void)menuNeedsUpdate:(SPIdMenu *)menu
+{
+	if(![menu isKindOfClass:[SPIdMenu class]]) return;
+	//NOTE: NSTableView will usually copy the menu and call this method on the copy. Matching with == won't work!
+
+	//walk through the menu and clear the attributedTitle if set. This will remove the gray color from the default items
+	for(NSMenuItem *item in [menu itemArray]) {
+		if([item attributedTitle]) {
+			[item setAttributedTitle:nil];
+		}
+	}
+
+	NSDictionary *rowData = NSArrayObjectAtIndex(tableFields, [tableSourceView selectedRow]);
+
+	if([[menu menuId] isEqualToString:@"encodingPopupMenu"]) {
+		NSString *tableEncoding = [tableDataInstance tableEncoding];
+		//NSString *databaseEncoding = [databaseDataInstance getDatabaseDefaultCharacterSet];
+		//NSString *serverEncoding = [databaseDataInstance getServerDefaultCharacterSet];
+
+		struct _cmpMap defaultCmp[] = {
+			{
+				NSLocalizedString(@"Table",@"Table Structure : Encoding dropdown : 'item is table default' marker"),
+				[NSString stringWithFormat:NSLocalizedString(@"This is the default encoding of table “%@”.", @"Table Structure : Encoding dropdown : table marker tooltip"),selectedTable],
+				tableEncoding
+			},
+			/* //we could, but that might confuse users even more plus there is no inheritance between a columns charset and the db/server default
+			 {
+			 NSLocalizedString(@"Database",@"Table Structure : Encoding dropdown : 'item is database default' marker"),
+			 [NSString stringWithFormat:NSLocalizedString(@"This is the default encoding of database “%@”.", @"Table Structure : Encoding dropdown : database marker tooltip"),[tableDocumentInstance database]],
+			 databaseEncoding
+			 },
+			 {
+			 NSLocalizedString(@"Server",@"Table Structure : Encoding dropdown : 'item is server default' marker"),
+			 NSLocalizedString(@"This is the default encoding of this server.", @"Table Structure : Encoding dropdown : server marker tooltip"),
+			 serverEncoding
+			 } */
+		};
+
+		_BuildMenuWithPills(menu, defaultCmp, COUNT_OF(defaultCmp));
+	}
+	else if([[menu menuId] isEqualToString:@"collationPopupMenu"]) {
+		NSString *encoding = [rowData objectForKey:@"encodingName"];
+		NSString *encodingDefaultCollation = [databaseDataInstance getDefaultCollationForEncoding:encoding];
+		NSString *tableCollation = [tableDataInstance statusValueForKey:@"Collation"];
+		//NSString *databaseCollation = [databaseDataInstance getDatabaseDefaultCollation];
+		//NSString *serverCollation = [databaseDataInstance getServerDefaultCollation];
+
+		struct _cmpMap defaultCmp[] = {
+			{
+				NSLocalizedString(@"Default",@"Table Structure : Collation dropdown : 'item is the same as the default collation of the row's charset' marker"),
+				[NSString stringWithFormat:NSLocalizedString(@"This is the default collation of encoding “%@”.", @"Table Structure : Collation dropdown : default marker tooltip"),encoding],
+				encodingDefaultCollation
+			},
+			{
+				NSLocalizedString(@"Table",@"Table Structure : Collation dropdown : 'item is the same as the collation of table' marker"),
+				[NSString stringWithFormat:NSLocalizedString(@"This is the default collation of table “%@”.", @"Table Structure : Collation dropdown : table marker tooltip"),selectedTable],
+				tableCollation
+			},
+			/* // see the comment for charset above
+			 {
+			 NSLocalizedString(@"Database",@"Table Structure : Collation dropdown : 'item is the same as the collation of database' marker"),
+			 [NSString stringWithFormat:NSLocalizedString(@"This is the default collation of database “%@”.", @"Table Structure : Collation dropdown : database marker tooltip"),[tableDocumentInstance database]],
+			 databaseCollation
+			 },
+			 {
+			 NSLocalizedString(@"Server",@"Table Structure : Collation dropdown : 'item is the same as the collation of server' marker"),
+			 NSLocalizedString(@"This is the default collation of this server.", @"Table Structure : Collation dropdown : server marker tooltip"),
+			 serverCollation
+			 } */
+		};
+
+		_BuildMenuWithPills(menu, defaultCmp, COUNT_OF(defaultCmp));
+	}
+}
+
+#pragma mark -
 
 - (void)dealloc
 {
@@ -1474,18 +2632,348 @@ static NSString *SPRemoveFieldAndForeignKey = @"SPRemoveFieldAndForeignKey";
 	[prefs removeObserver:indexesController forKeyPath:SPUseMonospacedFonts];
 #endif
 
-	[tableFields release];
-	[oldRow release];
-	[enumFields release];
-	[typeSuggestions release];
-	[extraFieldSuggestions release];
+	SPClear(tableFields);
+	SPClear(oldRow);
+	SPClear(enumFields);
+	SPClear(typeSuggestions);
+	SPClear(extraFieldSuggestions);
 
-	[fieldValidation release], fieldValidation = nil;
+	SPClear(fieldValidation);
 
-	if (defaultValues) [defaultValues release];
-	if (selectedTable) [selectedTable release];
+	if (defaultValues) SPClear(defaultValues);
+	if (selectedTable) SPClear(selectedTable);
 
 	[super dealloc];
 }
 
++ (SPFieldTypeHelp *)helpForFieldType:(NSString *)typeName
+{
+	static dispatch_once_t token;
+	static NSArray *list;
+	dispatch_once(&token, ^{
+		// NSString *FN(NSNumber *): format a number using the user locale (to make large numbers more legible)
+#define FN(x) [NSNumberFormatter localizedStringFromNumber:x numberStyle:NSNumberFormatterDecimalStyle]
+		NSString *intRangeTpl = NSLocalizedString(@"Signed: %@ to %@\nUnsigned: %@ to %@",@"range of integer types");
+		// NSString *INTR(NSNumber *sMin, NSNumber *sMax, NSNumber *uMin, NSNumber *uMax): return formatted string for integer types (signed min/max, unsigned min/max)
+#define INTR(sMin,sMax,uMin,uMax) [NSString stringWithFormat:intRangeTpl,FN(sMin),FN(sMax),FN(uMin),FN(uMax)]
+		list = [@[
+			MakeFieldTypeHelp(
+				SPMySQLTinyIntType,
+				@"TINYINT[(M)] [UNSIGNED] [ZEROFILL]",
+				INTR(@(-128),@127,@0,@255),
+				NSLocalizedString(@"The smallest integer type, requires 1 byte storage space. M is the optional display width and does not affect the possible value range.",@"description of tinyint")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLSmallIntType,
+				@"SMALLINT[(M)] [UNSIGNED] [ZEROFILL]",
+				INTR(@(-32768), @32767, @0, @65535),
+				NSLocalizedString(@"Requires 2 bytes storage space. M is the optional display width and does not affect the possible value range.",@"description of smallint")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLMediumIntType,
+				@"MEDIUMINT[(M)] [UNSIGNED] [ZEROFILL]",
+				INTR(@(-8388608), @8388607, @0, @16777215),
+				NSLocalizedString(@"Requires 3 bytes storage space. M is the optional display width and does not affect the possible value range.",@"description of mediumint")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLIntType,
+				@"INT[(M)] [UNSIGNED] [ZEROFILL]",
+				INTR(@(-2147483648), @2147483647, @0, @4294967295),
+				NSLocalizedString(@"Requires 4 bytes storage space. M is the optional display width and does not affect the possible value range. INTEGER is an alias to this type.",@"description of int")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLBigIntType,
+				@"BIGINT[(M)] [UNSIGNED] [ZEROFILL]",
+				INTR([NSDecimalNumber decimalNumberWithString:@"-9223372036854775808"], [NSDecimalNumber decimalNumberWithString:@"9223372036854775807"], @0, [NSDecimalNumber decimalNumberWithString:@"18446744073709551615"]),
+				NSLocalizedString(@"Requires 8 bytes storage space. M is the optional display width and does not affect the possible value range. Note: Arithmetic operations might fail for large numbers.",@"description of bigint")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLFloatType,
+				@"FLOAT[(M,D)] [UNSIGNED] [ZEROFILL]",
+				NSLocalizedString(@"Accurate to approx. 7 decimal places", @"range of float"),
+				NSLocalizedString(@"IEEE 754 single-precision floating-point value. M is the maxium number of digits, of which D may be after the decimal point. Note: Many decimal numbers can only be approximated by floating-point values. See DECIMAL if you require exact results.",@"description of float")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLDoubleType,
+				@"DOUBLE[(M,D)] [UNSIGNED] [ZEROFILL]",
+				NSLocalizedString(@"Accurate to approx. 15 decimal places", @"range of double"),
+				NSLocalizedString(@"IEEE 754 double-precision floating-point value. M is the maxium number of digits, of which D may be after the decimal point. Note: Many decimal numbers can only be approximated by floating-point values. See DECIMAL if you require exact results.",@"description of double")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLDoublePrecisionType,
+				@"DOUBLE PRECISION[(M,D)] [UNSIGNED] [ZEROFILL]",
+				@"",
+				NSLocalizedString(@"This is an alias for DOUBLE.",@"description of double precision")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLRealType,
+				@"REAL[(M,D)] [UNSIGNED] [ZEROFILL]",
+				@"",
+				NSLocalizedString(@"This is an alias for DOUBLE, unless REAL_AS_FLOAT is configured.",@"description of double real")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLDecimalType,
+				@"DECIMAL[(M[,D])] [UNSIGNED] [ZEROFILL]",
+				NSLocalizedString(@"M (precision): Up to 65 digits\nD (scale): 0 to 30 digits", @"range of decimal"),
+				NSLocalizedString(@"A fixed-point, exact decimal value. M is the maxium number of digits, of which D may be after the decimal point. When rounding, 0-4 is always rounded down, 5-9 up (“round towards nearest”).",@"description of decimal")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLSerialType,
+				@"SERIAL",
+				[NSString stringWithFormat:NSLocalizedString(@"Range: %@ to %@", @"range for serial type"),FN(@0),FN([NSDecimalNumber decimalNumberWithString:@"18446744073709551615"])],
+				NSLocalizedString(@"This is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.",@"description of serial")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLBitType,
+				@"BIT[(M)]",
+				NSLocalizedString(@"M: 1 (default) to 64", @"range for bit type"),
+				NSLocalizedString(@"A bit-field type. M specifies the number of bits. If shorter values are inserted, they will be aligned on the least significant bit. See the SET type if you want to explicitly name each bit.",@"description of bit")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLBoolType,
+				@"BOOL",
+				@"",
+				NSLocalizedString(@"This is an alias for TINYINT(1).",@"description of bool")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLBoolean,
+				@"BOOLEAN",
+				@"",
+				NSLocalizedString(@"This is an alias for TINYINT(1).",@"description of boolean")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLDecType,
+				@"DEC[(M[,D])] [UNSIGNED] [ZEROFILL]",
+				@"",
+				NSLocalizedString(@"This is an alias for DECIMAL.",@"description of dec")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLFixedType,
+				@"FIXED[(M[,D])] [UNSIGNED] [ZEROFILL]",
+				@"",
+				NSLocalizedString(@"This is an alias for DECIMAL.",@"description of fixed")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLNumericType,
+				@"NUMERIC[(M[,D])] [UNSIGNED] [ZEROFILL]",
+				@"",
+				NSLocalizedString(@"This is an alias for DECIMAL.",@"description of numeric")
+			),
+			// ----------------------------------------------------------------------------------
+			MakeFieldTypeHelp(
+				SPMySQLCharType,
+				@"CHAR(M)",
+				NSLocalizedString(@"M: 0 to 255 characters", @"range for char type"),
+				NSLocalizedString(@"A character string that will require M×w bytes per row, independent of the actual content length. w is the maximum number of bytes a single character can occupy in the given encoding.",@"description of char")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLVarCharType,
+				@"VARCHAR(M)",
+				[NSString stringWithFormat:NSLocalizedString(@"M: %@ to %@ characters", @"range for varchar type"),FN(@0),FN(@(65535))],
+				NSLocalizedString(@"A character string that can store up to M bytes, but requires less space for shorter values. The actual number of characters is further limited by the used encoding and the values of other fields in the row.",@"description of varchar")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLTinyTextType,
+				@"TINYTEXT",
+				NSLocalizedString(@"Up to 255 characters", @"range for tinytext type"),
+				NSLocalizedString(@"A character string that can store up to 255 bytes, but requires less space for shorter values. The actual number of characters is further limited by the used encoding. Unlike VARCHAR this type does not count towards the maximum row length.",@"description of tinytext")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLTextType,
+				@"TEXT[(M)]",
+				[NSString stringWithFormat:NSLocalizedString(@"M: %@ to %@ characters", @"range for text type"),FN(@0),FN(@(65535))],
+				NSLocalizedString(@"A character string that can store up to M bytes, but requires less space for shorter values. The actual number of characters is further limited by the used encoding. Unlike VARCHAR this type does not count towards the maximum row length.",@"description of text")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLMediumTextType,
+				@"MEDIUMTEXT",
+				[NSString stringWithFormat:NSLocalizedString(@"Up to %@ characters (16 MiB)", @"range for mediumtext type"),FN(@16777215)],
+				NSLocalizedString(@"A character string with variable length. The actual number of characters is further limited by the used encoding. Unlike VARCHAR this type does not count towards the maximum row length.",@"description of mediumtext")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLLongTextType,
+				@"LONGTEXT",
+				[NSString stringWithFormat:NSLocalizedString(@"M: %@ to %@ characters (4 GiB)", @"range for longtext type"),FN(@0),FN(@4294967295)],
+				NSLocalizedString(@"A character string with variable length. The actual number of characters is further limited by the used encoding. Unlike VARCHAR this type does not count towards the maximum row length.",@"description of longtext")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLTinyBlobType,
+				@"TINYBLOB",
+				NSLocalizedString(@"Up to 255 bytes", @"range for tinyblob type"),
+				NSLocalizedString(@"A byte array with variable length. Unlike VARBINARY this type does not count towards the maximum row length.",@"description of tinyblob")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLMediumBlobType,
+				@"MEDIUMBLOB",
+				[NSString stringWithFormat:NSLocalizedString(@"Up to %@ bytes (16 MiB)", @"range for mediumblob type"),FN(@16777215)],
+				NSLocalizedString(@"A byte array with variable length. Unlike VARBINARY this type does not count towards the maximum row length.",@"description of mediumblob")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLBlobType,
+				@"BLOB[(M)]",
+				[NSString stringWithFormat:NSLocalizedString(@"M: %@ to %@ bytes", @"range for blob type"),FN(@0),FN(@65535)],
+				NSLocalizedString(@"A byte array with variable length. Unlike VARBINARY this type does not count towards the maximum row length.",@"description of blob")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLLongBlobType,
+				@"LONGBLOB",
+				[NSString stringWithFormat:NSLocalizedString(@"Up to %@ bytes (4 GiB)", @"range for longblob type"),FN(@4294967295)],
+				NSLocalizedString(@"A byte array with variable length. Unlike VARBINARY this type does not count towards the maximum row length.",@"description of longblob")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLBinaryType,
+				@"BINARY(M)",
+				NSLocalizedString(@"M: 0 to 255 bytes", @"range for binary type"),
+				NSLocalizedString(@"A byte array with fixed length. Shorter values will always be padded to the right with 0x00 until they fit M.",@"description of binary")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLVarBinaryType,
+				@"VARBINARY(M)",
+				[NSString stringWithFormat:NSLocalizedString(@"M: %@ to %@ bytes", @"range for varbinary type"),FN(@0),FN(@(65535))],
+				NSLocalizedString(@"A byte array with variable length. The actual number of bytes is further limited by the values of other fields in the row.",@"description of varbinary")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLJsonType,
+				@"JSON",
+				NSLocalizedString(@"Limited to @@max_allowed_packet", @"range for json type"),
+				NSLocalizedString(@"A data type that validates JSON data on INSERT and internally stores it in a binary format that is both, more compact and faster to access than textual JSON.\nAvailable from MySQL 5.7.8.", @"description of json")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLEnumType,
+				@"ENUM('member',...)",
+				[NSString stringWithFormat:NSLocalizedString(@"Up to %@ distinct members (<%@ in practice)\n1-2 bytes storage", @"range for enum type"),FN(@(65535)),FN(@3000)],
+				NSLocalizedString(@"Defines a list of members, of which every field can use at most one. Values are sorted by their index number (starting at 0 for the first member).",@"description of enum")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLSetType,
+				@"SET('member',...)",
+				NSLocalizedString(@"Range: 1 to 64 members\n1, 2, 3, 4 or 8 bytes storage", @"range for set type"),
+				NSLocalizedString(@"A SET can define up to 64 members (as strings) of which a field can use one or more using a comma-separated list. Upon insertion the order of members is automatically normalized and duplicate members will be eliminated. Assignment of numbers is supported using the same semantics as for BIT types.",@"description of set")
+			),
+			// --------------------------------------------------------------------------
+			MakeFieldTypeHelp(
+				SPMySQLDateType,
+				@"DATE",
+				NSLocalizedString(@"Range: 1000-01-01 to 9999-12-31", @"range for date type"),
+				NSLocalizedString(@"Stores a date without time information. The representation is YYYY-MM-DD. The value is not affected by any time zone setting. Invalid values are converted to 0000-00-00.",@"description of date")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLDatetimeType,
+				@"DATETIME[(F)]",
+				NSLocalizedString(@"Range: 1000-01-01 00:00:00.0 to 9999-12-31 23:59:59.999999\nF (precision): 0 (1s) to 6 (1µs)", @"range for datetime type"),
+				NSLocalizedString(@"Stores a date and time of day. The representation is YYYY-MM-DD HH:MM:SS[.I*], I being fractional seconds. The value is not affected by any time zone setting. Invalid values are converted to 0000-00-00 00:00:00.0. Fractional seconds were added in MySQL 5.6.4 with a precision down to microseconds (6), specified by F.",@"description of datetime")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLTimestampType,
+				@"TIMETSTAMP[(F)]",
+				NSLocalizedString(@"Range: 1970-01-01 00:00:01.0 to 2038-01-19 03:14:07.999999\nF (precision): 0 (1s) to 6 (1µs)", @"range for timestamp type"),
+				NSLocalizedString(@"Stores a date and time of day as seconds since the beginning of the UNIX epoch (1970-01-01 00:00:00). The values displayed/stored are affected by the connection's @@time_zone setting.\nThe representation is the same as for DATETIME. Invalid values, as well as \"second zero\", are converted to 0000-00-00 00:00:00.0. Fractional seconds were added in MySQL 5.6.4 with a precision down to microseconds (6), specified by F. Some additional rules may apply.",@"description of timestamp")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLTimeType,
+				@"TIME[(F)]",
+				NSLocalizedString(@"Range: -838:59:59.0 to 838:59:59.0\nF (precision): 0 (1s) to 6 (1µs)", @"range for time type"),
+				NSLocalizedString(@"Stores a time of day, duration or time interval. The representation is HH:MM:SS[.I*], I being fractional seconds. The value is not affected by any time zone setting. Invalid values are converted to 00:00:00. Fractional seconds were added in MySQL 5.6.4 with a precision down to microseconds (6), specified by F.",@"description of time")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLYearType,
+				@"YEAR(4)",
+				NSLocalizedString(@"Range: 0000, 1901 to 2155", @"range for year type"),
+				NSLocalizedString(@"Represents a 4 digit year value, stored as 1 byte. Invalid values are converted to 0000 and two digit values 0 to 69 will be converted to years 2000 to 2069, resp. values 70 to 99 to years 1970 to 1999.\nThe YEAR(2) type was removed in MySQL 5.7.5.",@"description of year")
+			),
+			// --------------------------------------------------------------------------
+			MakeFieldTypeHelp(
+				SPMySQLGeometryType,
+				@"GEOMETRY",
+				@"",
+				NSLocalizedString(@"Can store a single spatial value of types POINT, LINESTRING or POLYGON. Spatial support in MySQL is based on the OpenGIS Geometry Model.",@"description of geometry")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLPointType,
+				@"POINT",
+				@"",
+				NSLocalizedString(@"Represents a single location in coordinate space using X and Y coordinates. The point is zero-dimensional.",@"description of point")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLLineStringType,
+				@"LINESTRING",
+				@"",
+				NSLocalizedString(@"Represents an ordered set of coordinates where each consecutive pair of two points is connected by a straight line.",@"description of linestring")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLPolygonType,
+				@"POLYGON",
+				@"",
+				NSLocalizedString(@"Creates a surface by combining one LinearRing (ie. a LineString that is closed and simple) as the outside boundary with zero or more inner LinearRings acting as \"holes\".",@"description of polygon")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLMultiPointType,
+				@"MULTIPOINT",
+				@"",
+				NSLocalizedString(@"Represents a set of Points without specifying any kind of relation and/or order between them.",@"description of multipoint")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLMultiLineStringType,
+				@"MULTILINESTRING",
+				@"",
+				NSLocalizedString(@"Represents a collection of LineStrings.",@"description of multilinestring")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLMultiPolygonType,
+				@"MULTIPOLYGON",
+				@"",
+				NSLocalizedString(@"Represents a collection of Polygons. The Polygons making up the MultiPolygon must not intersect.",@"description of multipolygon")
+			),
+			MakeFieldTypeHelp(
+				SPMySQLGeometryCollectionType,
+				@"GEOMETRYCOLLECTION",
+				@"",
+				NSLocalizedString(@"Represents a collection of objects of any other single- or multi-valued spatial type. The only restriction being, that all objects must share a common coordinate system.",@"description of geometrycollection")
+			),
+		] retain];
+#undef FN
+#undef INTR
+	});
+
+	for (SPFieldTypeHelp *item in list) {
+		if ([[item typeName] isEqualToString:typeName]) {
+			return item;
+		}
+	}
+	
+	return nil;
+}
+
 @end
+
+#pragma mark -
+
+void _BuildMenuWithPills(NSMenu *menu,struct _cmpMap *map,size_t mapEntries)
+{
+	NSDictionary *baseAttrs = @{NSFontAttributeName:[menu font],NSParagraphStyleAttributeName: [NSParagraphStyle defaultParagraphStyle]};
+
+	for(NSMenuItem *item in [menu itemArray]) {
+		NSMutableAttributedString *itemStr = [[NSMutableAttributedString alloc] initWithString:[item title] attributes:baseAttrs];
+		NSString *value = [item representedObject];
+
+		NSMutableArray *tooltipParts = [NSMutableArray array];
+		for (unsigned int i = 0; i < mapEntries; ++i) {
+			struct _cmpMap *cmp = &map[i];
+			if([cmp->cmpWith isEqualToString:value]) {
+				SPPillAttachmentCell *cell = [[SPPillAttachmentCell alloc] init];
+				[cell setStringValue:cmp->title];
+				NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
+				[attachment setAttachmentCell:[cell autorelease]];
+				NSAttributedString *attachmentString = [NSAttributedString attributedStringWithAttachment:[attachment autorelease]];
+
+				[[itemStr mutableString] appendString:@" "];
+				[itemStr appendAttributedString:attachmentString];
+
+				if(cmp->tooltipPart) [tooltipParts addObject:cmp->tooltipPart];
+			}
+		}
+		if([tooltipParts count]) [item setToolTip:[tooltipParts componentsJoinedByString:@" "]];
+
+		[item setAttributedTitle:[itemStr autorelease]];
+	}
+}

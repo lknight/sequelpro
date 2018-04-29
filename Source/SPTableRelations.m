@@ -35,6 +35,7 @@
 #import "SPTableView.h"
 #import "SPAlertSheets.h"
 #import "RegexKitLite.h"
+#import "SPServerSupport.h"
 
 #import <SPMySQL/SPMySQL.h>
 
@@ -52,7 +53,7 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 
 - (void)_refreshRelationDataForcingCacheRefresh:(BOOL)clearAllCaches;
 - (void)_updateAvailableTableColumns;
-- (void)_reopenRelationSheet:(NSWindow *)sheet returnCode:(NSInteger)returnCode contextInfo:(void *)contextInfo;
+- (void)addAlertDidEnd:(NSAlert *)alert returnCode:(NSInteger)returnCode contextInfo:(void *)contextInfo;
 
 @end
 
@@ -163,7 +164,7 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 												[thatTable backtickQuotedString],
 												[thatColumn backtickQuotedString]]];
 	
-	NSArray *onActions = [NSArray arrayWithObjects:@"RESTRICT", @"CASCADE", @"SET NULL", @"NO ACTION", nil];
+	NSArray *onActions = @[@"RESTRICT", @"CASCADE", @"SET NULL", @"NO ACTION"];
 	
 	// If required add ON DELETE
 	if ([onDeletePopUpButton selectedTag] >= 0) {
@@ -187,32 +188,44 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 
 		// Retrieve the last connection error message.
 		NSString *errorText = [connection lastErrorMessage];
+		
+		NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+		
+		[alert setMessageText:NSLocalizedString(@"Error creating relation", @"error creating relation message")];
+		[alert addButtonWithTitle:NSLocalizedString(@"OK", @"OK button")];
+		[alert setInformativeText:[NSString stringWithFormat:NSLocalizedString(@"The specified relation could not be created.\n\nMySQL said: %@", @"error creating relation informative message"), errorText]];
 
 		// An error ID of 1005 indicates a foreign key error.  These are thrown for many reasons, but the two
 		// most common are 121 (name probably in use) and 150 (types don't exactly match).
 		// Retrieve the InnoDB status and extract the most recent error for more helpful text.
 		if ([connection lastErrorID] == 1005) {
-			NSString *statusText = [connection getFirstFieldFromQuery:@"SHOW INNODB STATUS"];
-			NSString *detailErrorString = [statusText stringByMatching:@"latest foreign key error\\s+-----*\\s+[0-9: ]*(.*?)\\s+-----" options:(RKLCaseless | RKLDotAll) inRange:NSMakeRange(0, [statusText length]) capture:1L error:NULL];
-			if (detailErrorString) {
-				errorText = [NSString stringWithFormat:NSLocalizedString(@"%@\n\nDetail: %@", @"Add relation error detail intro"), errorText, [detailErrorString stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
-			}
-
-			// Detect name duplication if appropriate
-			if ([errorText isMatchedByRegex:@"errno: 121"] && [errorText isMatchedByRegex:@"already exists"]) {
-				[takenConstraintNames addObject:[[constraintName stringValue] lowercaseString]];
-				[self controlTextDidChange:[NSNotification notificationWithName:@"dummy" object:constraintName]];
+			SPInnoDBStatusQueryFormat status = [[tableDocumentInstance serverSupport] innoDBStatusQuery];
+			if(status.queryString) {
+				NSString *statusText = [[[connection queryString:status.queryString] getRowAsArray] objectAtIndex:status.columnIndex];
+				NSString *detailErrorString = [statusText stringByMatching:@"latest foreign key error\\s+-----*\\s+[0-9: ]*(.*?)\\s+-----" options:(RKLCaseless | RKLDotAll) inRange:NSMakeRange(0, [statusText length]) capture:1L error:NULL];
+				if (detailErrorString) {
+					[alert setAccessoryView:detailErrorView];
+					[detailErrorText setString:[detailErrorString stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
+				}
+				
+				// Detect name duplication if appropriate
+				if ([errorText isMatchedByRegex:@"errno: 121"] && [errorText isMatchedByRegex:@"already exists"]) {
+					[takenConstraintNames addObject:[[constraintName stringValue] lowercaseString]];
+					[self controlTextDidChange:[NSNotification notificationWithName:@"dummy" object:constraintName]];
+				}
 			}
 		}
 
-		SPBeginAlertSheet(NSLocalizedString(@"Error creating relation", @"error creating relation message"), 
-						  NSLocalizedString(@"OK", @"OK button"),
-						  nil, nil, [NSApp mainWindow], self, @selector(_reopenRelationSheet:returnCode:contextInfo:), nil,
-						  [NSString stringWithFormat:NSLocalizedString(@"The specified relation was unable to be created.\n\nMySQL said: %@", @"error creating relation informative message"), errorText]);
-	} 
+		[[alert onMainThread] beginSheetModalForWindow:[tableDocumentInstance parentWindow] modalDelegate:self didEndSelector:@selector(addAlertDidEnd:returnCode:contextInfo:) contextInfo:NULL];
+	}
 	else {
 		[self _refreshRelationDataForcingCacheRefresh:YES];
 	}
+}
+
+- (void)addAlertDidEnd:(NSAlert *)alert returnCode:(NSInteger)returnCode contextInfo:(void *)contextInfo
+{
+	[self performSelector:@selector(openRelationSheet:) withObject:self afterDelay:0.0];
 }
 
 /**
@@ -257,11 +270,25 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 	}
 
 	// Get all InnoDB tables in the current database
-	// TODO: MySQL 4 compatibility
-	SPMySQLResult *result = [connection queryString:[NSString stringWithFormat:@"SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND engine = 'InnoDB' AND table_schema = %@", [[tableDocumentInstance database] tickQuotedString]]];
-	[result setDefaultRowReturnType:SPMySQLResultRowAsArray];
-	for (NSArray *eachRow in result) {
-		[refTablePopUpButton addItemWithTitle:[eachRow objectAtIndex:0]];
+	if ([[tableDocumentInstance serverSupport] supportsInformationSchema]) {
+		//MySQL 5.0+
+		SPMySQLResult *result = [connection queryString:[NSString stringWithFormat:@"SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND engine = 'InnoDB' AND table_schema = %@", [[tableDocumentInstance database] tickQuotedString]]];
+		[result setDefaultRowReturnType:SPMySQLResultRowAsArray];
+		for (NSArray *eachRow in result) {
+			[refTablePopUpButton addItemWithTitle:[eachRow objectAtIndex:0]];
+		}
+	}
+	else {
+		//this will work back to 3.23.0, innodb was added in 3.23.49
+		SPMySQLResult *result = [connection queryString:[NSString stringWithFormat:@"SHOW TABLE STATUS FROM %@", [[tableDocumentInstance database] backtickQuotedString]]];
+		[result setDefaultRowReturnType:SPMySQLResultRowAsArray];
+		[result setReturnDataAsStrings:YES]; // some mysql versions would return NSData for string fields otherwise
+		for (NSArray *eachRow in result) {
+			// col[1] was named "Type" < 4.1, "Engine" afterwards
+			if(![[[eachRow objectAtIndex:1] uppercaseString] isEqualToString:@"INNODB"]) continue;
+			// col[0] is the table name
+			[refTablePopUpButton addItemWithTitle:[eachRow objectAtIndex:0]];
+		}
 	}
 
 	// Reset other fields
@@ -346,27 +373,6 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 }
 
 #pragma mark -
-#pragma mark TextField delegate methods
-
-- (void)controlTextDidChange:(NSNotification *)notification
-{	
-	// Make sure the user does not enter a taken name, using the quickly-generated incomplete list
-	if ([notification object] == constraintName) {		
-		NSString *userValue = [[constraintName stringValue] lowercaseString];
-		
-		// Make field red and disable add button
-		if ([takenConstraintNames containsObject:userValue]) {
-			[constraintName setTextColor:[NSColor redColor]];
-			[confirmAddRelationButton setEnabled:NO];
-		}
-		else {
-			[constraintName setTextColor:[NSColor controlTextColor]];
-			[confirmAddRelationButton setEnabled:YES];
-		}
-	}
-}
-
-#pragma mark -
 #pragma mark Tableview datasource methods
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView
@@ -376,37 +382,13 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 
 - (id)tableView:(NSTableView *)tableView objectValueForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
 {
-	return [[relationData objectAtIndex:rowIndex] objectForKey:[tableColumn identifier]];
-}
-
-#pragma mark -
-#pragma mark Tableview delegate methods
-
-/**
- * Called whenever the relations table view selection changes.
- */
-- (void)tableViewSelectionDidChange:(NSNotification *)notification
-{
-	[removeRelationButton setEnabled:([relationsTableView numberOfSelectedRows] > 0)];
-}
-
-/*
- * Double-click action on table cells - for the time being, return
- * NO to disable editing.
- */
-- (BOOL)tableView:(NSTableView *)tableView shouldEditTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
-{
-	if ([tableDocumentInstance isWorking]) return NO;
-
-	return NO;
-}
-
-/**
- * Disable row selection while the document is working.
- */
-- (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)rowIndex
-{
-	return ![tableDocumentInstance isWorking];
+	id data = [[relationData objectAtIndex:rowIndex] objectForKey:[tableColumn identifier]];
+	//dim the database name if it matches the current database
+	if([[tableColumn identifier] isEqualToString:SPRelationFKDatabaseKey] && [[tableDocumentInstance database] isEqual:data]) {
+		NSDictionary *textAttributes = @{NSForegroundColorAttributeName: [NSColor lightGrayColor]};
+		data = [[[NSAttributedString alloc] initWithString:(NSString *)data attributes:textAttributes] autorelease];
+	}
+	return data;
 }
 
 #pragma mark -
@@ -415,9 +397,8 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 /**
  * Disable all content interactive elements during an ongoing task.
  */
-- (void)startDocumentTaskForTab:(NSNotification *)aNotification
+- (void)startDocumentTaskForTab:(NSNotification *)notification
 {
-
 	// Only proceed if this view is selected.
 	if (![[tableDocumentInstance selectedToolbarItemIdentifier] isEqualToString:SPMainToolbarTableRelations]) return;
 
@@ -429,7 +410,7 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 /**
  * Enable all content interactive elements after an ongoing task.
  */
-- (void)endDocumentTaskForTab:(NSNotification *)aNotification
+- (void)endDocumentTaskForTab:(NSNotification *)notification
 {
 	// Only proceed if this view is selected.
 	if (![[tableDocumentInstance selectedToolbarItemIdentifier] isEqualToString:SPMainToolbarTableRelations]) return;
@@ -496,10 +477,7 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 			NSString *thisTable = [tablesListInstance tableName];
 			NSIndexSet *selectedSet = [relationsTableView selectedRowIndexes];
 
-			NSUInteger row = [selectedSet lastIndex];
-
-			while (row != NSNotFound) 
-			{
+			[selectedSet enumerateIndexesWithOptions:NSEnumerationReverse usingBlock:^(NSUInteger row, BOOL * _Nonnull stop) {
 				NSString *relationName = [[relationData objectAtIndex:row] objectForKey:SPRelationNameKey];
 				NSString *query = [NSString stringWithFormat:@"ALTER TABLE %@ DROP FOREIGN KEY %@", [thisTable backtickQuotedString], [relationName backtickQuotedString]];
 
@@ -507,17 +485,16 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 
 				if ([connection queryErrored]) {
 
-					SPBeginAlertSheet(NSLocalizedString(@"Unable to delete relation", @"error deleting relation message"), 
-									  NSLocalizedString(@"OK", @"OK button"),
-									  nil, nil, [NSApp mainWindow], nil, nil, nil, 
-									  [NSString stringWithFormat:NSLocalizedString(@"The selected relation couldn't be deleted.\n\nMySQL said: %@", @"error deleting relation informative message"), [connection lastErrorMessage]]);
+					SPOnewayAlertSheet(
+						NSLocalizedString(@"Unable to delete relation", @"error deleting relation message"),
+						[NSApp mainWindow],
+						[NSString stringWithFormat:NSLocalizedString(@"The selected relation couldn't be deleted.\n\nMySQL said: %@", @"error deleting relation informative message"), [connection lastErrorMessage]]
+					);
 
 					// Abort loop
-					break;
-				} 
-
-				row = [selectedSet indexLessThanIndex:row];
-			}
+					*stop = YES;
+				}
+			}];
 
 			[self _refreshRelationDataForcingCacheRefresh:YES];
 		}
@@ -561,6 +538,57 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 	}
 	
 	return YES;
+}
+
+#pragma mark -
+#pragma mark TextField delegate methods
+
+- (void)controlTextDidChange:(NSNotification *)notification
+{
+	// Make sure the user does not enter a taken name, using the quickly-generated incomplete list
+	if ([notification object] == constraintName) {
+		NSString *userValue = [[constraintName stringValue] lowercaseString];
+
+		// Make field red and disable add button
+		if ([takenConstraintNames containsObject:userValue]) {
+			[constraintName setTextColor:[NSColor redColor]];
+			[confirmAddRelationButton setEnabled:NO];
+		}
+		else {
+			[constraintName setTextColor:[NSColor controlTextColor]];
+			[confirmAddRelationButton setEnabled:YES];
+		}
+	}
+}
+
+#pragma mark -
+#pragma mark Tableview delegate methods
+
+/**
+ * Called whenever the relations table view selection changes.
+ */
+- (void)tableViewSelectionDidChange:(NSNotification *)notification
+{
+	[removeRelationButton setEnabled:([relationsTableView numberOfSelectedRows] > 0)];
+}
+
+/*
+ * Double-click action on table cells - for the time being, return
+ * NO to disable editing.
+ */
+- (BOOL)tableView:(NSTableView *)tableView shouldEditTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
+{
+	if ([tableDocumentInstance isWorking]) return NO;
+
+	return NO;
+}
+
+/**
+ * Disable row selection while the document is working.
+ */
+- (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)rowIndex
+{
+	return ![tableDocumentInstance isWorking];
 }
 
 #pragma mark -
@@ -651,14 +679,6 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 	[columnInfo release];
 }
 
-/**
- * Reopen the add relation sheet, usually after an error message, with the previous content.
- */
-- (void)_reopenRelationSheet:(NSWindow *)sheet returnCode:(NSInteger)returnCode contextInfo:(void *)contextInfo
-{
-	[self performSelector:@selector(openRelationSheet:) withObject:self afterDelay:0.0];
-}
-
 #pragma mark -
 
 - (void)dealloc
@@ -666,8 +686,8 @@ static NSString *SPRelationOnDeleteKey   = @"on_delete";
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
 	[[NSUserDefaults standardUserDefaults] removeObserver:self forKeyPath:SPUseMonospacedFonts];
 
-	[relationData release], relationData = nil;
-	[takenConstraintNames release], takenConstraintNames = nil;
+	SPClear(relationData);
+	SPClear(takenConstraintNames);
 
 	[super dealloc];
 }

@@ -32,17 +32,15 @@
 #import "ImageAndTextCell.h"
 #import "SPEncodingPopupAccessory.h"
 #import "SPQueryController.h"
-#import "SPQueryDocumentsController.h"
 #import "SPDatabaseDocument.h"
 #import "SPConnectionController.h"
 #import "RegexKitLite.h"
 #import "SPTextView.h"
 #import "SPSplitView.h"
+#import "SPAppController.h"
 
 #define SP_MULTIPLE_SELECTION_PLACEHOLDER_STRING NSLocalizedString(@"[multiple selection]", @"[multiple selection]")
 #define SP_NO_SELECTION_PLACEHOLDER_STRING       NSLocalizedString(@"[no selection]", @"[no selection]")
-
-#define SP_Int(x) [NSNumber numberWithInteger:x]
 
 @interface SPQueryFavoriteManager ()
 
@@ -85,11 +83,11 @@
 - (void)awakeFromNib
 {
 #ifndef SP_CODA
-	[favorites addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-			@"Global", @"name", 
-			@"", @"headerOfFileURL",
-			@"", @"query",
-			nil]];
+	[favorites addObject:@{
+			@"name"            : @"Global",
+			@"headerOfFileURL" : @"",
+			@"query"           : @""
+	}];
 
 	// Set up the split view
 	[favoritesSplitView setMinSize:152.f ofSubviewAtIndex:0];
@@ -123,7 +121,7 @@
 	[self _initWithNoSelection];
 
 	// Register drag types
-	[favoritesTableView registerForDraggedTypes:[NSArray arrayWithObject:SPFavoritesPasteboardDragType]];
+	[favoritesTableView registerForDraggedTypes:@[SPFavoritesPasteboardDragType]];
 	
 	[favoritesArrayController setContent:favorites];
 	[favoritesTableView reloadData];
@@ -201,11 +199,19 @@
 	[[self window] makeFirstResponder:favoriteNameTextField];
 
 	// Duplicate a selected favorite if sender == self
-	if (sender == self)
-		favorite = [NSMutableDictionary dictionaryWithObjects:[NSArray arrayWithObjects:[[favoriteNameTextField stringValue] stringByAppendingFormat:@" Copy"], [favoriteQueryTextView string], nil] forKeys:[NSArray arrayWithObjects:@"name", @"query", nil]];
+	if (sender == self) {
+		favorite = [NSMutableDictionary dictionaryWithDictionary:@{
+			@"name":  [NSString stringWithFormat:NSLocalizedString(@"%@ Copy", @"query favorite manager : duplicate favorite : new favorite name"),[favoriteNameTextField stringValue]],
+			@"query": [NSString stringWithString:[favoriteQueryTextView string]] // #2938 - without copying the string we would store the live NS*MutableString object that backs the text view and changes its contents when selection changes!
+		}];
+	}
 	// Add a new favorite
-	else
-		favorite = [NSMutableDictionary dictionaryWithObjects:[NSArray arrayWithObjects:@"New Favorite", @"", nil] forKeys:[NSArray arrayWithObjects:@"name", @"query", nil]];
+	else {
+		favorite = [NSMutableDictionary dictionaryWithDictionary:@{
+			@"name":  NSLocalizedString(@"New Favorite",@"query favorite manager : new favorite : name"),
+			@"query": @""
+		}];
+	}
 	
 	// If a favourite is currently selected, add the new favourite next to it
 	if ([favoritesTableView numberOfSelectedRows] > 0) {
@@ -256,9 +262,10 @@
  */
 - (IBAction)removeQueryFavorite:(id)sender
 {
-
+	//sender can be a NSButton or a NSMenuItem
+	
 	// Complete editing in the window
-	[[sender window] makeFirstResponder:[sender window]];
+	[[self window] makeFirstResponder:[self window]];
 
 	NSAlert *alert = [NSAlert alertWithMessageText:NSLocalizedString(@"Remove selected query favorites?", @"remove selected query favorites message") 
 									 defaultButton:NSLocalizedString(@"Remove", @"remove button")
@@ -309,7 +316,7 @@
 #ifndef SP_CODA
 	NSSavePanel *panel = [NSSavePanel savePanel];
 	
-	[panel setAllowedFileTypes:[NSArray arrayWithObject:SPFileExtensionSQL]];
+	[panel setAllowedFileTypes:@[SPFileExtensionSQL]];
 	
 	[panel setExtensionHidden:NO];
 	[panel setAllowsOtherFileTypes:YES];
@@ -334,7 +341,7 @@
 #ifndef SP_CODA
 	NSSavePanel *panel = [NSSavePanel savePanel];
 	
-	[panel setAllowedFileTypes:[NSArray arrayWithObject:SPFileExtensionDefault]];
+	[panel setAllowedFileTypes:@[SPFileExtensionDefault]];
 	
 	[panel setExtensionHidden:NO];
 	[panel setAllowsOtherFileTypes:NO];
@@ -379,24 +386,24 @@
 {
 	// Look up the sender's tag to determine the placeholder to insert.
 	// Note that tag values alter behaviour slightly - see below.
-	NSDictionary *lookupTable = [NSDictionary dictionaryWithObjectsAndKeys:
-		NSLocalizedString(@"default_value", @"Query snippet default value placeholder"), SP_Int(100),
-		NSLocalizedString(@"$(shell_command)", @"Query snippet shell command syntax and placeholder"), SP_Int(101),
-		@"$1", SP_Int(501),
-		@"¦a¦b¦", SP_Int(102),
-		@"¦¦a¦b¦¦", SP_Int(103),
-		@"¦", SP_Int(104),
-		@"$SP_SELECTED_TABLE", SP_Int(105),
-		@"$SP_SELECTED_TABLES", SP_Int(106),
-		@"$SP_SELECTED_DATABASE", SP_Int(107),
-		@"¦$SP_ASLIST_ALL_FIELDS¦", SP_Int(108),
-		@"¦¦$SP_ASLIST_ALL_FIELDS¦¦", SP_Int(109),
-		@"¦$SP_ASLIST_ALL_TABLES¦", SP_Int(110),
-		@"¦¦$SP_ASLIST_ALL_TABLES¦¦", SP_Int(111),
-		@"¦$SP_ASLIST_ALL_DATABASES¦", SP_Int(112),
-		@"¦¦$SP_ASLIST_ALL_DATABASES¦¦", SP_Int(113),
-	nil];
-	NSString *placeholder = [lookupTable objectForKey:SP_Int([[sender selectedItem] tag])];
+	NSDictionary *lookupTable = @{
+			@100 : NSLocalizedString(@"default_value", @"Query snippet default value placeholder"),
+			@101 : NSLocalizedString(@"$(shell_command)", @"Query snippet shell command syntax and placeholder"),
+			@501 : @"$1",
+			@102 : @"¦a¦b¦",
+			@103 : @"¦¦a¦b¦¦",
+			@104 : @"¦",
+			@105 : @"$SP_SELECTED_TABLE",
+			@106 : @"$SP_SELECTED_TABLES",
+			@107 : @"$SP_SELECTED_DATABASE",
+			@108 : @"¦$SP_ASLIST_ALL_FIELDS¦",
+			@109 : @"¦¦$SP_ASLIST_ALL_FIELDS¦¦",
+			@110 : @"¦$SP_ASLIST_ALL_TABLES¦",
+			@111 : @"¦¦$SP_ASLIST_ALL_TABLES¦¦",
+			@112 : @"¦$SP_ASLIST_ALL_DATABASES¦",
+			@113 : @"¦¦$SP_ASLIST_ALL_DATABASES¦¦"
+	};
+	NSString *placeholder = [lookupTable objectForKey:[NSNumber numberWithInteger:[[sender selectedItem] tag]]];
 	if (!placeholder) [NSException raise:NSInternalInconsistencyException format:@"Inserted placeholder (%lld) not found", (long long)[[sender selectedItem] tag]];
 
 	// Iterate through the current snippets, to get the lowest unused tab counter, and
@@ -414,7 +421,7 @@
 		// Check whether the selection range lies within the snippet
 		if (selRange.location != NSNotFound
 			&& selRange.location > matchedRange.location + 1
-			&& selRange.location + selRange.length < matchedRange.location + matchedRange.length)
+			&& NSMaxRange(selRange) < NSMaxRange(matchedRange))
 		{
 			selectionInsideSnippet = YES;
 		}
@@ -422,9 +429,9 @@
 		// Identify the tab completion index
 		NSRange snippetNumberRange = [queryString rangeOfRegex:snipRegex options:RKLNoOptions inRange:matchedRange capture:1L error:NULL];
 		NSInteger snippetNumber = [[queryString substringWithRange:snippetNumberRange] integerValue];
-		[snippetNumbers setObject:[NSNumber numberWithBool:YES] forKey:[NSNumber numberWithInteger:snippetNumber]];
+		[snippetNumbers setObject:@YES forKey:[NSNumber numberWithInteger:snippetNumber]];
 
-		rangeStart = matchedRange.location + matchedRange.length;
+		rangeStart = NSMaxRange(matchedRange);
 	}
 
 	// If the selection is not inside a snippet, wrap it inside the snippet syntax.
@@ -477,9 +484,7 @@
 		[prefs setObject:[self queryFavoritesForFileURL:nil] forKey:SPQueryFavorites];
 
 		// Inform all opened documents to update the query favorites list
-		for(id doc in [[NSApp delegate] orderedDocuments])
-			if([[doc valueForKeyPath:@"customQueryInstance"] respondsToSelector:@selector(queryFavoritesHaveBeenUpdated:)])
-				[[doc valueForKeyPath:@"customQueryInstance"] queryFavoritesHaveBeenUpdated:self];
+		[[NSNotificationCenter defaultCenter] postNotificationName:SPQueryFavoritesHaveBeenUpdatedNotification object:self];
 	}
 #endif
 
@@ -488,7 +493,7 @@
 #ifndef SP_CODA
 - (IBAction)showHelp:(id)sender
 {
-	[[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:NSLocalizedString(@"http://www.sequelpro.com/docs/Query_Favorites", @"Localized help page for query favourites - do not localize if no translated webpage is available")]];
+	[[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:NSLocalizedString(@"http://www.sequelpro.com/docs/Working_with_Query_Favorites", @"Localized help page for query favourites - do not localize if no translated webpage is available")]];
 }
 #endif
 
@@ -676,7 +681,7 @@
 - (BOOL)tableView:(NSTableView *)aTableView writeRowsWithIndexes:(NSIndexSet *)rows toPasteboard:(NSPasteboard*)pboard
 {
 
-	NSArray *pboardTypes = [NSArray arrayWithObject:SPFavoritesPasteboardDragType];
+	NSArray *pboardTypes = @[SPFavoritesPasteboardDragType];
 	NSInteger originalRow = [rows firstIndex];
 
 	if(originalRow < 1) return NO;
@@ -729,11 +734,9 @@
 
 	// TODO: still rely on a NSArray but in the future rewrite it to use the NSIndexSet directly
 	NSMutableArray *draggedRows = [[NSMutableArray alloc] initWithCapacity:1];
-	NSUInteger rowIndex = [draggedIndexes firstIndex];
-	while ( rowIndex != NSNotFound ) {
+	[draggedIndexes enumerateIndexesUsingBlock:^(NSUInteger rowIndex, BOOL * _Nonnull stop) {
 		[draggedRows addObject:[NSNumber numberWithUnsignedInteger:rowIndex]];
-		rowIndex = [draggedIndexes indexGreaterThanIndex: rowIndex];
-	}
+	}];
 
 	NSInteger destinationRow = row;
 	NSInteger offset = 0;
@@ -790,14 +793,9 @@
 		if (returnCode == NSAlertDefaultReturn) {
 			NSIndexSet *indexes = [favoritesTableView selectedRowIndexes];
 
-			// get last index
-			NSUInteger currentIndex = [indexes lastIndex];
-
-			while (currentIndex != NSNotFound) {
+			[indexes enumerateIndexesWithOptions:NSEnumerationReverse usingBlock:^(NSUInteger currentIndex, BOOL * _Nonnull stop) {
 				[favorites removeObjectAtIndex:currentIndex];
-				// get next index (beginning from the end)
-				currentIndex = [indexes indexLessThanIndex:currentIndex];
-			}
+			}];
 
 			[favoritesArrayController rearrangeObjects];
 			[favoritesTableView reloadData];
@@ -821,8 +819,6 @@
 
 		NSString *filename = [[[panel URLs] objectAtIndex:0] path];
 		NSError *readError = nil;
-		NSString *convError = nil;
-		NSPropertyListFormat format;
 		NSInteger insertionIndexStart, insertionIndexEnd;
 
 		NSDictionary *spf = nil;
@@ -830,15 +826,19 @@
 		if([[[filename pathExtension] lowercaseString] isEqualToString:SPFileExtensionDefault]) {
 			NSData *pData = [NSData dataWithContentsOfFile:filename options:NSUncachedRead error:&readError];
 
-			spf = [[NSPropertyListSerialization propertyListFromData:pData 
-					mutabilityOption:NSPropertyListImmutable format:&format errorDescription:&convError] retain];
-
-			if(!spf || readError != nil || [convError length] || !(format == NSPropertyListXMLFormat_v1_0 || format == NSPropertyListBinaryFormat_v1_0)) {
-				NSAlert *alert = [NSAlert alertWithMessageText:[NSString stringWithString:NSLocalizedString(@"Error while reading data file", @"error while reading data file")]
+			if(pData && !readError) {
+				spf = [[NSPropertyListSerialization propertyListWithData:pData
+																 options:NSPropertyListImmutable
+																  format:NULL
+																   error:&readError] retain];
+			}
+			
+			if(!spf || readError) {
+				NSAlert *alert = [NSAlert alertWithMessageText:NSLocalizedString(@"Error while reading data file", @"error while reading data file")
 												 defaultButton:NSLocalizedString(@"OK", @"OK button") 
 											   alternateButton:nil 
-												  otherButton:nil 
-									informativeTextWithFormat:NSLocalizedString(@"File couldn't be read.", @"error while reading data file")];
+												   otherButton:nil
+									 informativeTextWithFormat:NSLocalizedString(@"File couldn't be read. (%@)", @"error while reading data file"), [readError localizedDescription]];
 
 				[alert setAlertStyle:NSCriticalAlertStyle];
 				[alert runModal];
@@ -917,9 +917,9 @@
 			NSMutableArray *favoriteData = [NSMutableArray array];
 
 	
-			[spfdata setObject:[NSNumber numberWithInteger:1] forKey:@"version"];
-			[spfdata setObject:@"query favorites" forKey:@"format"];
-			[spfdata setObject:[NSNumber numberWithBool:NO] forKey:@"encrypted"];
+			[spfdata setObject:@1 forKey:SPFVersionKey];
+			[spfdata setObject:SPFQueryFavoritesContentType forKey:SPFFormatKey];
+			[spfdata setObject:@NO forKey:@"encrypted"];
 
 			NSIndexSet *indexes = [favoritesTableView selectedRowIndexes];
 
@@ -931,24 +931,25 @@
 
 			[spfdata setObject:favoriteData forKey:SPQueryFavorites];
 			
-			NSString *err = nil;
-			NSData *plist = [NSPropertyListSerialization dataFromPropertyList:spfdata
-													  format:NSPropertyListXMLFormat_v1_0
-											errorDescription:&err];
+			NSError *error = nil;
+			
+			NSData *plist = [NSPropertyListSerialization dataWithPropertyList:spfdata
+																	   format:NSPropertyListXMLFormat_v1_0
+																	  options:0
+																		error:&error];
 
-			if(err != nil) {
-				NSAlert *alert = [NSAlert alertWithMessageText:[NSString stringWithString:NSLocalizedString(@"Error while converting query favorite data", @"error while converting query favorite data")]
+			if(error) {
+				NSAlert *alert = [NSAlert alertWithMessageText:NSLocalizedString(@"Error while converting query favorite data", @"error while converting query favorite data")
 												 defaultButton:NSLocalizedString(@"OK", @"OK button") 
 											   alternateButton:nil 
-												  otherButton:nil 
-									informativeTextWithFormat:@"%@", err];
+												   otherButton:nil
+									 informativeTextWithFormat:@"%@", [error localizedDescription]];
 
 				[alert setAlertStyle:NSCriticalAlertStyle];
 				[alert runModal];
 				return;
 			}
 
-			NSError *error = nil;
 			[plist writeToURL:[panel URL] options:NSAtomicWrite error:&error];
 			if (error) [[NSAlert alertWithError:error] runModal];
 
@@ -972,7 +973,7 @@
 
 - (void)dealloc
 {
-	[favorites release];
+	SPClear(favorites);
 	
 	[super dealloc];
 }

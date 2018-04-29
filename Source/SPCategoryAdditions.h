@@ -42,12 +42,12 @@
 #import "SPWindowAdditions.h"
 #import "SPDataAdditions.h"
 #import "SPDataBase64EncodingAdditions.h"
-#import "SPMenuAdditions.h"
 #import "SPNotLoaded.h"
 #import "SPMainThreadTrampoline.h"
 #import "SPColorAdditions.h"
 #import "SPFileManagerAdditions.h"
 #import "SPDateAdditions.h"
+#import "SPScreenAdditions.h"
 
 #import "NSNotificationCenterThreadingAdditions.h"
 #import "NSMutableArray-MultipleSort.h"

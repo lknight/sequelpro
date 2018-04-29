@@ -630,8 +630,8 @@ static inline void SPMySQLStreamingResultStoreFreeRowData(SPMySQLStreamingResult
 {
 
 	// Throw an exception if the range is out of bounds
-	if (rangeToRemove.location + rangeToRemove.length > numberOfRows) {
-		[NSException raise:NSRangeException format:@"Requested storage index (%llu) beyond bounds (%llu)", (unsigned long long)(rangeToRemove.location + rangeToRemove.length), (unsigned long long)numberOfRows];
+	if (NSMaxRange(rangeToRemove) > numberOfRows) {
+		[NSException raise:NSRangeException format:@"Requested storage index (%llu) beyond bounds (%llu)", (unsigned long long)(NSMaxRange(rangeToRemove)), (unsigned long long)numberOfRows];
 	}
 
 	// Lock the data mutex
@@ -639,14 +639,14 @@ static inline void SPMySQLStreamingResultStoreFreeRowData(SPMySQLStreamingResult
 
 	// Free rows in the range
 	NSUInteger i;
-	for (i = rangeToRemove.location; i < rangeToRemove.location + rangeToRemove.length; i++) {
+	for (i = rangeToRemove.location; i < NSMaxRange(rangeToRemove); i++) {
 		SPMySQLStreamingResultStoreFreeRowData(dataStorage[i]);
 	}
 	numberOfRows -= rangeToRemove.length;
 
 	// Renumber all subsequent indices to fill the gap
 	size_t pointerSize = sizeof(SPMySQLStreamingResultStoreRowData *);
-	memmove(dataStorage + rangeToRemove.location, dataStorage + rangeToRemove.location + rangeToRemove.length, (numberOfRows - rangeToRemove.location) * pointerSize);
+	memmove(dataStorage + rangeToRemove.location, dataStorage + NSMaxRange(rangeToRemove), (numberOfRows - rangeToRemove.location) * pointerSize);
 
 	// Unlock the mutex
 	pthread_mutex_unlock(&dataLock);
@@ -809,9 +809,7 @@ static inline void SPMySQLStreamingResultStoreFreeRowData(SPMySQLStreamingResult
 	}
 
 	// Update the connection's error statuses to reflect any errors during the content download
-	[parentConnection _updateLastErrorID:NSNotFound];
-	[parentConnection _updateLastErrorMessage:nil];
-	[parentConnection _updateLastSqlstate:nil];
+	[parentConnection _updateLastErrorInfos];
 
 	// Unlock the parent connection now all data has been retrieved
 	[parentConnection _unlockConnection];

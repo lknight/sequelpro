@@ -30,7 +30,7 @@
 
 #import "SPGotoDatabaseController.h"
 
-@interface SPGotoDatabaseController (Private)
+@interface SPGotoDatabaseController ()
 
 /** Update the list of matched names
  * @param filter     The string to be matched.
@@ -42,13 +42,42 @@
  * It will neither clear the filteredList first, nor change the isFiltered ivar!
  * Search is case insensitive.
  */
-- (void)_buildHightlightedFilterList:(NSString *)filter didFindExactMatch:(BOOL *)exactMatch;
+- (void)_buildFilterList:(NSString *)filter didFindExactMatch:(BOOL *)exactMatch;
 
 - (IBAction)okClicked:(id)sender;
 - (IBAction)cancelClicked:(id)sender;
 - (IBAction)searchChanged:(id)sender;
+- (IBAction)toggleWordSearch:(id)sender;
 
+- (BOOL)qualifiesForWordSearch; //takes s from searchField
 @end
+
+static BOOL StringQualifiesForWordSearch(NSString *s);
+
+#pragma mark -
+
+@interface SPGotoFilteredItem : NSObject {
+	NSString *string;
+	NSArray *matches;
+	BOOL isCustomItem;
+}
+@property(nonatomic,retain) NSString *string;
+@property(nonatomic,retain) NSArray *matches;
+@property(nonatomic,assign) BOOL isCustomItem;
+
++ (SPGotoFilteredItem *)item;
+@end
+
+@implementation SPGotoFilteredItem
+
+@synthesize string;
+@synthesize matches;
+@synthesize isCustomItem;
+
++ (SPGotoFilteredItem *)item { return [[[SPGotoFilteredItem alloc] init] autorelease]; }
+@end
+
+#pragma mark -
 
 @implementation SPGotoDatabaseController
 
@@ -57,9 +86,14 @@
 - (id)init
 {
     if ((self = [super initWithWindowNibName:@"GotoDatabaseDialog"])) {
-        unfilteredList = [[NSMutableArray alloc] init];
+		unfilteredList = [[NSMutableArray alloc] init];
 		filteredList   = [[NSMutableArray alloc] init];
 		isFiltered     = NO;
+		highlightAttrs = [@{
+			NSBackgroundColorAttributeName: [NSColor colorWithCalibratedRed:249/255.0 green:247/255.0 blue:62/255.0 alpha:0.5],
+			NSUnderlineColorAttributeName:  [NSColor colorWithCalibratedRed:246/255.0 green:189/255.0 blue:85/255.0 alpha:1.0],
+			NSUnderlineStyleAttributeName:  [NSNumber numberWithInt:NSUnderlineStyleThick]
+		} retain];
 
 		[self setAllowCustomNames:YES];
     }
@@ -104,27 +138,53 @@
 
 		BOOL exactMatch = NO;
 
-		[self _buildHightlightedFilterList:newFilter didFindExactMatch:&exactMatch];
+		[self _buildFilterList:newFilter didFindExactMatch:&exactMatch];
 
 		//always add the search string to the end of the list (in case the user
 		//wants to switch to a DB not in the list) unless there was an exact match
 		if ([self allowCustomNames] && !exactMatch) {
-			NSMutableAttributedString *searchValue = [[NSMutableAttributedString alloc] initWithString:newFilter];
-
-			[searchValue applyFontTraits:NSItalicFontMask range:NSMakeRange(0, [newFilter length])];
-
-			[filteredList addObject:[searchValue autorelease]];
+			// remove quotes if any
+			if(StringQualifiesForWordSearch(newFilter))
+				newFilter = [newFilter substringWithRange:NSMakeRange(1, [newFilter length]-2)];
+			
+			if([newFilter length]) {
+				SPGotoFilteredItem *customItem = [SPGotoFilteredItem item];
+				[customItem setString:newFilter];
+				[customItem setIsCustomItem:YES];
+				
+				[filteredList addObject:customItem];
+			}
 		}
 	}
 
 	[databaseListView reloadData];
 
 	// Ensure we have a selection
-	if ([databaseListView selectedRow] < 0) {
+	if ([databaseListView selectedRow] < 0 && [self numberOfRowsInTableView:databaseListView]) {
 		[databaseListView selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
 	}
 	
 	[okButton setEnabled:([databaseListView selectedRow] >= 0)];
+}
+
+- (IBAction)toggleWordSearch:(id)sender
+{
+	//if the search field is empty just add two " and put the caret in-between
+	if(![[searchField stringValue] length]) {
+		[searchField setStringValue:@"\"\""];
+		[[searchField currentEditor] setSelectedRange:NSMakeRange(1, 0)];
+
+	}
+	else if (![self qualifiesForWordSearch]) {
+		[searchField setStringValue:[NSString stringWithFormat:@"\"%@\"",[searchField stringValue]]];
+		//change the selection to be inside the quotes
+		[[searchField currentEditor] setSelectedRange:NSMakeRange(1, [[searchField stringValue] length]-2)];
+	}
+	else {
+		NSString *str = [searchField stringValue];
+		[searchField setStringValue:[str substringWithRange:NSMakeRange(1, [str length]-2)]];
+	}
+	[self searchChanged:nil];
 }
 
 #pragma mark -
@@ -137,14 +197,10 @@
 	id attrValue;
 
 	if (isFiltered) {
-		attrValue = [filteredList objectOrNilAtIndex:row];
+		attrValue = [(SPGotoFilteredItem *)[filteredList objectOrNilAtIndex:row] string];
 	}
 	else {
 		attrValue = [unfilteredList objectOrNilAtIndex:row];
-	}
-
-	if ([attrValue isKindOfClass:[NSAttributedString class]]) {
-		return [attrValue string];
 	}
 
 	return attrValue;
@@ -176,35 +232,89 @@
 #pragma mark -
 #pragma mark Private
 
-- (void)_buildHightlightedFilterList:(NSString *)filter didFindExactMatch:(BOOL *)exactMatch
+- (void)_buildFilterList:(NSString *)filter didFindExactMatch:(BOOL *)exactMatch
 {
-	NSDictionary *attrs = [[NSDictionary alloc] initWithObjectsAndKeys:
-						   [NSColor colorWithCalibratedRed:249/255.0 green:247/255.0 blue:62/255.0 alpha:0.5],NSBackgroundColorAttributeName,
-						   [NSColor colorWithCalibratedRed:180/255.0 green:164/255.0 blue:31/255.0 alpha:1.0],NSUnderlineColorAttributeName,
-						   [NSNumber numberWithInt:NSUnderlineStyleSingle],NSUnderlineStyleAttributeName,
-						   nil];
-
-	for (NSString *db in unfilteredList) {
-		// Let's just assume it is in the users interest (most of the time) for searches to be CI.
-		NSRange match = [db rangeOfString:filter options:NSCaseInsensitiveSearch];
-
-		if (match.location == NSNotFound) continue;
-
-		// Should we check for exact match AND have not yet found one?
-		if (exactMatch && !*exactMatch) {
-			if (match.location == 0 && match.length == [db length]) {
-				*exactMatch = YES;
-			}
-		}
+	NSStringCompareOptions opts = NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch|NSWidthInsensitiveSearch;
+	
+	BOOL useWordSearch = StringQualifiesForWordSearch(filter);
+	
+	// interpret a quoted string as 'looking for exact submachtes only'
+	if(useWordSearch) {
+		//remove quotes for matching
+		filter = [filter substringWithRange:NSMakeRange(1, [filter length]-2)];
 		
-		NSMutableAttributedString *attrMatch = [[NSMutableAttributedString alloc] initWithString:db];
-
-		[attrMatch setAttributes:attrs range:match];
-
-		[filteredList addObject:[attrMatch autorelease]];
+		//look for matches
+		for (NSString *db in unfilteredList) {
+			NSRange matchRange = [db rangeOfString:filter options:opts];
+			
+			if(matchRange.location == NSNotFound) continue;
+			
+			// Should we check for exact match AND have not yet found one?
+			if (exactMatch && !*exactMatch) {
+				if (matchRange.location == 0 && matchRange.length == [db length]) {
+					*exactMatch = YES;
+				}
+			}
+			
+			SPGotoFilteredItem *item = [SPGotoFilteredItem item];
+			[item setString:db];
+			[item setMatches:@[[NSValue valueWithRange:matchRange]]];
+			
+			[filteredList addObject:item];
+		}
+	}
+	// default to a per-character search
+	else {
+		for (NSString *db in unfilteredList) {
+			
+			NSArray *matches = nil;
+			BOOL hasMatch = [db nonConsecutivelySearchString:filter matchingRanges:&matches];
+			
+			if(!hasMatch) continue;
+			
+			// Should we check for exact match AND have not yet found one?
+			if (exactMatch && !*exactMatch) {
+				if([matches count] == 1) {
+					NSRange match = [(NSValue *)[matches objectAtIndex:0] rangeValue];
+					if (match.location == 0 && match.length == [db length]) {
+						*exactMatch = YES;
+					}
+				}
+			}
+			
+			SPGotoFilteredItem *item = [SPGotoFilteredItem item];
+			[item setString:db];
+			[item setMatches:matches];
+			
+			[filteredList addObject:item];
+		}
 	}
 	
-	[attrs release];
+	//sort the filtered list
+	[filteredList sortUsingComparator:^NSComparisonResult(id obj1, id obj2) {
+		// word search produces only 1 match, skip.
+		if(!useWordSearch) {
+			// First we want to sort by number of match groups.
+			//   Less match groups -> better result:
+			//     Search string: abc
+			//     Matches: schema_abc, tablecloth
+			//     => First only has 1 match group, is more likely to be the desired result
+			NSUInteger mgc1 = [[(SPGotoFilteredItem *)obj1 matches] count];
+			NSUInteger mgc2 = [[(SPGotoFilteredItem *)obj2 matches] count];
+			if(mgc1 < mgc2)
+				return NSOrderedAscending;
+			if(mgc2 < mgc1)
+				return NSOrderedDescending;
+		}
+		// For strings with the same number of match groups we just sort alphabetically
+		return [[(SPGotoFilteredItem *)obj1 string] compare:[(SPGotoFilteredItem *)obj2 string]];
+	}];
+
+}
+
+- (BOOL)qualifiesForWordSearch
+{
+	return StringQualifiesForWordSearch([searchField stringValue]);
 }
 
 #pragma mark -
@@ -226,8 +336,54 @@
 		return [unfilteredList objectAtIndex:rowIndex];
 	}
 	else {
-		return [filteredList objectAtIndex:rowIndex];
+		return [(SPGotoFilteredItem *)[filteredList objectAtIndex:rowIndex] string];
 	}
+}
+
+#pragma mark -
+#pragma mark NSTableViewDelegate
+
+- (void)tableView:(NSTableView *)tableView willDisplayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row
+{
+	//nothing to do here, unless the list is filtered
+	if(!isFiltered) return;
+	
+	// The styling of source list table views is basically done by Apple by replacing
+	// the cell's string with an attributedstring. But if the data source were to
+	// already return an attributedstring, most of the other attributes Apple sets
+	// would not get applied. So we have to add our attributes after Apple has already
+	// modified the string returned by the data source.
+	
+	id cellValue = [cell objectValue];
+	//turn the cell value into something we can work with
+	NSMutableAttributedString *attrString;
+	if([cellValue isKindOfClass:[NSMutableAttributedString class]]) {
+		attrString = cellValue;
+	}
+	else if([cellValue isKindOfClass:[NSAttributedString class]]) {
+		attrString = [[[NSMutableAttributedString alloc] initWithAttributedString:cellValue] autorelease];
+	}
+	else if([cellValue isKindOfClass:[NSString class]]) {
+		attrString = [[[NSMutableAttributedString alloc] initWithString:cellValue] autorelease];
+	}
+	else {
+		SPLog(@"Unknown object for cellValue (type=%@)",[cellValue className]);
+		return;
+	}
+	
+	SPGotoFilteredItem *item = [filteredList objectAtIndex:row];
+	
+	if([item isCustomItem]) {
+		[[attrString mutableString] appendString:@"⁈"];
+		[attrString addAttribute:NSUnderlineStyleAttributeName value:@(NSUnderlineStyleSingle) range:NSMakeRange([attrString length]-1, 1)];
+	}
+	else {
+		for (NSValue *matchValue in [item matches]) {
+			[attrString addAttributes:highlightAttrs range:[matchValue rangeValue]];
+		}
+	}
+	
+	[cell setObjectValue:attrString];
 }
 
 #pragma mark -
@@ -240,15 +396,30 @@
 		[cancelButton performClick:control];
 		return YES;
 	}
+	
+	// the keyboard event is the preferable choice as it will also scroll the window
+	// TODO: check if the other path is ever used
+	NSEvent *currentEvent = [NSApp currentEvent];
+	BOOL isKeyDownEvent = ([currentEvent type] == NSKeyDown);
 
 	// Arrow down/up will usually go to start/end of the text field. we want to change the selected table row.
 	if (commandSelector == @selector(moveDown:)) {
-		[databaseListView selectRowIndexes:[NSIndexSet indexSetWithIndex:([databaseListView selectedRow]+1)] byExtendingSelection:NO];
+		if(isKeyDownEvent) {
+			[databaseListView keyDown:currentEvent];
+		}
+		else {
+			[databaseListView selectRowIndexes:[NSIndexSet indexSetWithIndex:([databaseListView selectedRow]+1)] byExtendingSelection:NO];
+		}
 		return YES;
 	}
 
 	if (commandSelector == @selector(moveUp:)) {
-		[databaseListView selectRowIndexes:[NSIndexSet indexSetWithIndex:([databaseListView selectedRow]-1)] byExtendingSelection:NO];
+		if(isKeyDownEvent) {
+			[databaseListView keyDown:currentEvent];
+		}
+		else {
+			[databaseListView selectRowIndexes:[NSIndexSet indexSetWithIndex:([databaseListView selectedRow]-1)] byExtendingSelection:NO];
+		}
 		return YES;
 	}
 
@@ -262,13 +433,32 @@
 }
 
 #pragma mark -
+#pragma mark NSUserInterfaceValidations
+
+- (BOOL)validateUserInterfaceItem:(id <NSValidatedUserInterfaceItem>)anItem
+{
+	if([anItem action] == @selector(toggleWordSearch:)) {
+		[(NSMenuItem *)anItem setState:([self qualifiesForWordSearch]? NSOnState : NSOffState)];
+	}
+	return YES;
+}
+
+#pragma mark -
 
 - (void)dealloc
 {
-    [unfilteredList release], unfilteredList = nil;
-	[filteredList release], filteredList = nil;
+    SPClear(unfilteredList);
+	SPClear(filteredList);
+	SPClear(highlightAttrs);
 
 	[super dealloc];
 }
 
 @end
+
+#pragma mark -
+
+BOOL StringQualifiesForWordSearch(NSString *s)
+{
+	return (s && ([s length] > 1) && (([s hasPrefix:@"\""] && [s hasSuffix:@"\""]) || ([s hasPrefix:@"'"] && [s hasSuffix:@"'"])));
+}

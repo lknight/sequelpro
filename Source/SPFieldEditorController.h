@@ -28,6 +28,21 @@
 //
 //  More info at <https://github.com/sequelpro/sequelpro>
 
+#ifndef SP_CODA
+
+#import <Quartz/Quartz.h> // QuickLookUI
+
+//This is an informal protocol
+@protocol _QLPreviewPanelController
+
+- (BOOL)acceptsPreviewPanelControl:(QLPreviewPanel *)panel;
+- (void)beginPreviewPanelControl:(QLPreviewPanel *)panel;
+- (void)endPreviewPanelControl:(QLPreviewPanel *)panel;
+
+@end
+
+#endif
+
 @class SPWindow;
 
 /**
@@ -38,7 +53,11 @@
  * This class offers a sheet for editing different kind of data such as text, blobs (including images) as 
  * editSheet and bit fields as bitSheet. 
  */
-@interface SPFieldEditorController : NSWindowController <NSComboBoxDataSource>
+@interface SPFieldEditorController : NSWindowController <NSComboBoxDataSource
+#ifndef SP_CODA
+, QLPreviewPanelDataSource, QLPreviewPanelDelegate, _QLPreviewPanelController
+#endif
+>
 {
 	IBOutlet id editSheetProgressBar;
 	IBOutlet id editSheetSegmentControl;
@@ -169,12 +188,38 @@
 
 	NSInteger editSheetReturnCode;
 	BOOL _isGeometry;
+	BOOL _isJSON;
 	NSUndoManager *esUndoManager;
 
 	NSDictionary *editedFieldInfo;
 }
 
 @property(readwrite, retain) NSDictionary *editedFieldInfo;
+
+//don't blame me for nonatomic,assign. That's how the previous setters worked :)
+
+/**
+ * The maximum text length of the underlying table field for input validation.
+ */
+@property(nonatomic,assign) unsigned long long textMaxLength;
+
+/**
+ * The field type of the underlying table field for input validation.
+ * The field type will be used for dispatching which sheet will be shown.
+ * If type == BIT the bitSheet will be used otherwise the editSheet.
+ */
+@property(nonatomic,assign) NSString *fieldType;
+
+/**
+ * The field encoding of the underlying table field for displaying it to the user.
+ */
+@property(nonatomic,assign) NSString *fieldEncoding;
+
+/**
+ * Whether underlying table field allows NULL for several validations.
+ * If allowNULL is YES NULL value is allowed for the underlying table field.
+ */
+@property(nonatomic,assign) BOOL allowNULL;
 
 - (IBAction)closeEditSheet:(id)sender;
 - (IBAction)openEditSheet:(id)sender;
@@ -196,11 +241,6 @@
 		isObjectBlob:(BOOL)isFieldBlob isEditable:(BOOL)isEditable withWindow:(NSWindow *)theWindow
 		sender:(id)sender contextInfo:(NSDictionary*)theContextInfo;
 
-- (void)setTextMaxLength:(NSUInteger)length;
-- (void)setFieldType:(NSString*)aType;
-- (void)setFieldEncoding:(NSString*)aEncoding;
-- (void)setAllowNULL:(BOOL)allowNULL;
-
 - (void)processPasteImageData;
 - (void)processUpdatedImageData:(NSData *)data;
 
@@ -212,5 +252,12 @@
 - (void)setWasCutPaste;
 - (void)setAllowedUndo;
 - (void)setDoGroupDueToChars;
+
+@end
+
+@protocol SPFieldEditorControllerDelegate <NSObject>
+
+@optional
+- (void)processFieldEditorResult:(id)data contextInfo:(NSDictionary*)contextInfo;
 
 @end

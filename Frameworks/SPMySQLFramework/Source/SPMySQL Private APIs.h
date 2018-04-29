@@ -47,7 +47,6 @@
 - (void)_disconnect;
 - (void)_updateConnectionVariables;
 - (void)_restoreConnectionVariables;
-- (BOOL)_checkConnectionIfNecessary;
 - (void)_validateThreadSetup;
 + (void)_removeThreadVariables:(NSNotification *)aNotification;
 
@@ -71,6 +70,7 @@
 
 @interface SPMySQLConnection (Max_Packet_Size_Private_API)
 
+- (NSInteger)_queryMaxAllowedPacketWithSQL:(NSString *)query resultInColumn:(NSUInteger)colIdx;
 - (void)_updateMaxQuerySize;
 - (void)_updateMaxQuerySizeEditability;
 - (BOOL)_attemptMaxQuerySizeIncreaseTo:(NSUInteger)targetSize;
@@ -82,6 +82,7 @@
 @interface SPMySQLConnection (Querying_and_Preparation_Private_API)
 
 - (void)_flushMultipleResultSets;
+- (void)_updateLastErrorInfos;
 - (void)_updateLastErrorMessage:(NSString *)theErrorMessage;
 - (void)_updateLastErrorID:(NSUInteger)theErrorID;
 - (void)_updateLastSqlstate:(NSString *)theSqlstate;
@@ -93,17 +94,13 @@
 @interface SPMySQLResult (Private_API)
 
 - (NSString *)_stringWithBytes:(const void *)bytes length:(NSUInteger)length;
+- (NSString *)_lossyStringWithBytes:(const void *)bytes length:(NSUInteger)length wasLossy:(BOOL *)outLossy;
 - (void)_setQueryExecutionTime:(double)theExecutionTime;
 
 @end
 
 // SPMySQLResult Data Conversion Private API
-@interface SPMySQLResult (Data_Conversion_Private_API)
-
-+ (void)_initializeDataConversion;
-- (id)_getObjectFromBytes:(char *)bytes ofLength:(NSUInteger)length fieldDefinitionIndex:(NSUInteger)fieldIndex previewLength:(NSUInteger)previewLength;
-
-@end
+#import "Data Conversion.h"
 
 /**
  * Set up a static function to allow fast calling of SPMySQLResult data conversion with cached selectors

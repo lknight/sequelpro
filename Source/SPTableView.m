@@ -34,8 +34,8 @@
 #import "SPWindowController.h"
 #import "SPFieldMapperController.h"
 
-@interface SPTableView (SPTableViewDelegate)
-
+@protocol SPTableViewDelegate <NSObject>
+@optional
 - (BOOL)cancelRowEditing;
 
 @end
@@ -61,13 +61,18 @@
 	return self;
 }
 
+- (void)dealloc
+{
+	[super dealloc];
+}
+
 - (void) awakeFromNib
 {
 	[super setDoubleAction:@selector(_doubleClickAction)];
 	
 	if ([NSTableView instancesRespondToSelector:@selector(awakeFromNib)]) {
 		[super awakeFromNib];
-}
+	}
 }
 
 #pragma mark -
@@ -88,6 +93,8 @@
 		[notifier addObserver:self selector:@selector(_disableDoubleClickAction:) name:NSWindowWillBeginSheetNotification object:aWindow];
 		[notifier addObserver:self selector:@selector(_enableDoubleClickAction:) name:NSWindowDidEndSheetNotification object:aWindow];
 	}
+	
+	[super viewWillMoveToWindow:aWindow];
 }
 
 /**
@@ -183,8 +190,7 @@
 				return;
 			} 
 			else {
-				[super keyDown:theEvent];
-				return;
+				goto pass_keyDown_to_super;
 			}
 
 		}
@@ -194,8 +200,9 @@
 			(![[[[self delegate] class] description] isEqualToString:@"SPConnectionController"])) {
 			
 			// Ensure that editing is permitted
-			if (![[self delegate] tableView:self shouldEditTableColumn:[[self tableColumns] objectAtIndex:0] row:[self selectedRow]]) return;
-
+			if(![[self delegate] respondsToSelector:@selector(tableView:shouldEditTableColumn:row:)]) return; // disallow by default
+			if(![[self delegate] tableView:self shouldEditTableColumn:[[self tableColumns] objectAtIndex:0] row:[self selectedRow]]) return;
+			
 			// Trigger a cell edit
 			[self editColumn:0 row:[self selectedRow] withEvent:nil select:YES];
 			
@@ -205,7 +212,7 @@
 
 	// Check if ESCAPE is hit and use it to cancel row editing if supported
 	else if ([theEvent keyCode] == 53 && [[self delegate] respondsToSelector:@selector(cancelRowEditing)]) {
-		if ([[self delegate] performSelector:@selector(cancelRowEditing)]) return;
+		if ([(id<SPTableViewDelegate>)[self delegate] cancelRowEditing]) return;
 	}
 	
 	// If the Tab key is used, but tab editing is disabled, change focus rather than entering edit mode.
@@ -219,8 +226,17 @@
 		
 		return;
 	}
-	
-	[super keyDown:theEvent];
+
+pass_keyDown_to_super:
+	@try {
+		[super keyDown:theEvent];
+	}
+	@catch (NSException *ex) {
+		// debug code for #2445
+		NSString *ownId = [NSString stringWithFormat:@"%@(%@)",self,([self respondsToSelector:@selector(identifier)]? [self identifier] : @"-N/A-")];
+		[NSException raise:NSInternalInconsistencyException
+					format:@"%s: passing event to super failed! (issue #2445)\n\nOriginal exception:\n%@\n\nEvent:\n  %@\nDelegate:\n  %@\nself:\n  %@",__PRETTY_FUNCTION__,ex,theEvent,[self delegate],ownId];
+	}
 }
 
 /**

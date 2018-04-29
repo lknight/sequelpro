@@ -214,7 +214,7 @@
     _addButtonRect.size = [[_control addTabButton] frame].size;
     if ([_control orientation] == PSMTabBarHorizontalOrientation) {
         _addButtonRect.origin.y = MARGIN_Y;
-        _addButtonRect.origin.x += [[cellWidths valueForKeyPath:@"@sum.floatValue"] floatValue] + MARGIN_X;
+		_addButtonRect.origin.x += [[cellWidths valueForKeyPath:@"@sum.floatValue"] floatValue] + MARGIN_X;
     } else {
         _addButtonRect.origin.x = 0;
         _addButtonRect.origin.y = [[cellWidths lastObject] floatValue];
@@ -633,7 +633,7 @@ static NSInteger potentialMinimumForArray(NSArray *array, NSInteger minimum)
 		}
 	}
 	
-	return TRUE;
+	return YES;
 }
 
 - (NSInteger)numberOfItemsInMenu:(NSMenu *)menu

@@ -54,12 +54,14 @@
 	[copy setSocketPath:socketPath];
 	[copy setUseSSL:useSSL];
 	[copy setSslKeyFilePath:sslKeyFilePath];
+	[copy setSslCipherList:sslCipherList];
 	[copy setSslCertificatePath:sslCertificatePath];
 	[copy setSslCACertificatePath:sslCACertificatePath];
 	[copy setTimeout:timeout];
 	[copy setUseKeepAlive:useKeepAlive];
 	[copy setRetryQueriesOnConnectionFailure:retryQueriesOnConnectionFailure];
 	[copy setDelegateQueryLogging:delegateQueryLogging];
+	[copy setClientFlags:clientFlags];
 
 	// Active connection state details, like selected database and encoding, are *not* copied.
 

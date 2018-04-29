@@ -32,12 +32,12 @@
 #import "SPTableCopy.h"
 #import "SPViewCopy.h"
 #import "SPTablesList.h"
+#import "SPCreateDatabaseInfo.h"
 
 #import <SPMySQL/SPMySQL.h>
 
 @interface SPDatabaseRename ()
 
-- (BOOL)_createDatabase:(NSString *)database;
 - (BOOL)_dropDatabase:(NSString *)database;
 
 - (void)_moveTables:(NSArray *)tables fromDatabase:(NSString *)sourceDatabase toDatabase:(NSString *)targetDatabase;
@@ -47,51 +47,30 @@
 
 @implementation SPDatabaseRename
 
-- (BOOL)renameDatabaseFrom:(NSString *)sourceDatabase to:(NSString *)targetDatabase
+/**
+ * Note that this doesn't currently support moving any non-table objects (i.e. views, proc, functions, events, etc).
+ */
+- (BOOL)renameDatabaseFrom:(SPCreateDatabaseInfo *)sourceDatabase to:(NSString *)targetDatabase
 {
-	NSArray *tables = nil;
-	NSArray *views = nil;
-	
 	// Check, whether the source database exists and the target database doesn't
-	BOOL sourceExists = [[connection databases] containsObject:sourceDatabase];
+	BOOL sourceExists = [[connection databases] containsObject:[sourceDatabase databaseName]];
 	BOOL targetExists = [[connection databases] containsObject:targetDatabase];
 	
-	if (sourceExists && !targetExists) {
-		tables = [tablesList allTableNames];
-		views = [tablesList allViewNames];
-	}
-	else {
-		return NO;
-	}
-		
-	BOOL success = [self _createDatabase:targetDatabase];
+	if (!sourceExists || targetExists) return NO;
+
+	NSArray *tables = [tablesList allTableNames];
+
+	BOOL success = [self createDatabase:targetDatabase
+						   withEncoding:[sourceDatabase defaultEncoding]
+						      collation:[sourceDatabase defaultCollation]];
 	
-	[self _moveTables:tables fromDatabase:sourceDatabase toDatabase:targetDatabase];
+	[self _moveTables:tables fromDatabase:[sourceDatabase databaseName] toDatabase:targetDatabase];
 	
-	tables = [connection tablesFromDatabase:sourceDatabase];
-		
-	if ([tables count] == 0) {
-		[self _dropDatabase:sourceDatabase];
-	} 
-		
 	return success;
 }
 
 #pragma mark -
 #pragma mark Private API
-
-/**
- * This method creates a new database.
- *
- * @param NSString newDatabaseName name of the new database to be created
- * @return BOOL YES on success, otherwise NO
- */
-- (BOOL)_createDatabase:(NSString *)database 
-{	
-	[connection queryString:[NSString stringWithFormat:@"CREATE DATABASE %@", [database backtickQuotedString]]];	
-	
-	return ![connection queryErrored];
-}
 
 /**
  * This method drops a database.

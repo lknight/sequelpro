@@ -54,10 +54,8 @@
  * Updates the displayed font according to the user's preferences.
  */
 - (void)updateDisplayedTableFontName
-{
-	NSFont *font = [NSUnarchiver unarchiveObjectWithData:[prefs dataForKey:SPGlobalResultTableFont]];
-	
-	[globalResultTableFontName setFont:font];
+{	
+	[globalResultTableFontName setFont:[NSUnarchiver unarchiveObjectWithData:[prefs dataForKey:SPGlobalResultTableFont]]];
 }
 
 #pragma mark -
@@ -91,6 +89,11 @@
 - (BOOL)preferencePaneAllowsResizing
 {
 	return NO;
+}
+
+- (void)preferencePaneWillBeShown
+{
+	[self updateDisplayedTableFontName];
 }
 
 @end

@@ -53,7 +53,6 @@
                           modalDelegate:(id)modalDelegate
                          didEndSelector:(SEL)didEndSelector
                             contextInfo:(void *)contextInfo
-                                    msg:(NSString *)msg
                                infoText:(NSString *)infoText
                              returnCode:(NSInteger *)returnCode
 {
@@ -69,7 +68,6 @@
 		                                              modalDelegate:modalDelegate
 		                                             didEndSelector:didEndSelector
 		                                                contextInfo:contextInfo
-		                                                        msg:msg
 		                                                   infoText:infoText
 		                                                 returnCode:returnCode];
 	}
@@ -93,43 +91,37 @@
 		aButton = [alert addButtonWithTitle:alternateButton];
 		[aButton setTag:NSAlertAlternateReturn];
 	}
+
 	if (otherButton) {
 		aButton = [alert addButtonWithTitle:otherButton];
 		[aButton setTag:NSAlertOtherReturn];
 	}
 
 	// Set alert  style
-	[alert setAlertStyle:NSWarningAlertStyle];
-	if(alertStyle)
-		[alert setAlertStyle:alertStyle];
+	[alert setAlertStyle:alertStyle ? alertStyle : NSWarningAlertStyle];
 
 	// Set the informative message if supplied
 	if (infoText) [alert setInformativeText:infoText];
-
-	// Set the informative message if supplied
-	if (msg) [alert setMessageText:msg];
 
 	// Run the alert on the main thread
 	[alert beginSheetModalForWindow:docWindow modalDelegate:modalDelegate didEndSelector:didEndSelector contextInfo:contextInfo];
 
 	// wait for the sheet
 	NSModalSession session = [NSApp beginModalSessionForWindow:[alert window]];
+
 	for (;;) {
 
 		// Since the returnCode can only be -1, 0, or 1
 		// run the session until returnCode was changed in 
 		// the didEndSelector method of the calling class
-		if(returnCode != &initialReturnCode)
-			break;
+		if (returnCode != &initialReturnCode) break;
 
 		// Execute code on DefaultRunLoop
 		[[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode 
 								 beforeDate:[NSDate distantFuture]];
 
 		// Break the run loop if sheet was closed
-		if ([NSApp runModalSession:session] != NSRunContinuesResponse 
-			|| ![[alert window] isVisible]) 
-			break;
+		if ([NSApp runModalSession:session] != NSRunContinuesResponse || ![[alert window] isVisible]) break;
 
 		// Execute code on DefaultRunLoop
 		[[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode 
@@ -142,6 +134,58 @@
 }
 
 @end
+
+/**
+ * Shorthand for SPOnewayAlertSheetWithStyle() with defaultButton=nil and alertStyle=NSWarningAlertStyle
+ */
+void SPOnewayAlertSheet(
+	NSString *title,
+	NSWindow *docWindow,
+	NSString *msg)
+{
+	SPOnewayAlertSheetWithStyle(title, nil, docWindow, msg, NSWarningAlertStyle);
+}
+
+/**
+ * A Send-and-forget variant for displaying alerts.
+ * It will queue the alert on the main thread and *always* immediately return.
+ *   Because of that there is no way to set a delegate and callback method
+ * and there is only one default button.
+ * If nil is passed as the button title it will be changed to @"OK".
+ * If nil is passed as the window NSAlert will be modal
+ */
+void SPOnewayAlertSheetWithStyle(
+	NSString *title,
+	NSString *defaultButton,
+	NSWindow *docWindow,
+	NSString *msg,
+	NSAlertStyle alertStyle)
+{
+	NSString *defaultText = (defaultButton)? defaultButton : NSLocalizedString(@"OK", @"OK button");
+	
+	dispatch_async(dispatch_get_main_queue(), ^{
+		// Set up an NSAlert with the supplied details
+		NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+		[alert setMessageText:title];
+		
+		NSButton *aButton = [alert addButtonWithTitle:defaultText];
+		[aButton setTag:NSAlertDefaultReturn];
+		
+		// Set the informative message if supplied
+		if (msg) [alert setInformativeText:msg];
+
+		// Set style (Defaults to NSWarningAlertStyle)
+		[alert setAlertStyle:alertStyle];
+		
+		// Run the alert
+		if (docWindow) {
+			[alert beginSheetModalForWindow:docWindow modalDelegate:nil didEndSelector:NULL contextInfo:NULL];
+			[docWindow makeKeyWindow]; // Ensure the alerting window is frontmost
+		} else {
+			[alert runModal];
+		}
+	});
+}
 
 /**
  * Provide a simple alias of NSBeginAlertSheet, with a few differences:

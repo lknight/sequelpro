@@ -42,6 +42,7 @@
 @interface SPDatabaseData : NSObject 
 {
 	NSString *characterSetEncoding;
+	NSString *defaultCollationForCharacterSet;
 	NSString *defaultCharacterSetEncoding;
 	NSString *defaultCollation;
 	NSString *serverDefaultCharacterSetEncoding;
@@ -55,7 +56,9 @@
 	NSMutableDictionary *cachedCollationsByEncoding;
 	
 	SPMySQLConnection *connection;
-	SPServerSupport *serverSupport;	
+	SPServerSupport *serverSupport;
+	
+	NSObject *charsetCollationLock;
 }
 
 /**
@@ -72,6 +75,8 @@
 
 - (NSArray *)getDatabaseCollations;
 - (NSArray *)getDatabaseCollationsForEncoding:(NSString *)encoding;
+- (NSString *)getDefaultCollationForEncoding:(NSString *)encoding;
+- (NSString *)getEncodingFromCollation:(NSString *)collation;
 - (NSArray *)getDatabaseStorageEngines;
 - (NSArray *)getDatabaseCharacterSetEncodings;
 

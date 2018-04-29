@@ -25,8 +25,10 @@
 #import <Cocoa/Cocoa.h>
 #import "PSMTabStyle.h"
 
-@interface PSMSequelProTabStyle : NSObject <PSMTabStyle> {
-	SInt32 systemVersion;
+@interface PSMSequelProTabStyle : NSObject <PSMTabStyle>
+{
+	BOOL systemVersionIsAtLeast10_7_0;
+	BOOL systemVersionIsAtLeast10_10_0;
 
     NSImage *sequelProCloseButton;
     NSImage *sequelProCloseButtonDown;
@@ -44,7 +46,7 @@
 	PSMTabBarControl *tabBar;
 }
 
-- (void)drawInteriorWithTabCell:(PSMTabBarCell *)cell inView:(NSView*)controlView;
+- (void)drawInteriorWithTabCell:(PSMTabBarCell *)cell inView:(NSView *)controlView;
 
 - (void)encodeWithCoder:(NSCoder *)aCoder;
 - (id)initWithCoder:(NSCoder *)aDecoder;
